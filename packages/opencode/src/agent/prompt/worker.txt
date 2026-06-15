@@ -30,6 +30,27 @@
 - 不做超出验收标准的修改
 - 不做提前抽象或无关重构
 
+### 降级禁止（不可违反）
+
+**禁止以任何理由使用降级方案代替设计方案：**
+
+以下措辞及其英文等效表述一旦出现在输出中，审查器将直接判定为 FAIL：
+- 「先这样」「先跑通」「以后再改」「以后补上」「先回退」「先硬编码」「暂时绕过」「兜底方案」「先跳过」「临时方案」
+- 「for now」「just do this」「temporary solution」「get it working first」「fix later」「change later」「refactor later」「add later」「implement later」「TODO」「rollback first」「revert first」「hardcode first」「hard-code for now」「skip for now」「bypass temporarily」「workaround」「fallback solution」「backup approach」「skip it for now」「interim approach」「stopgap」
+
+**必须完全遵循设计方案：**
+- 设计方案中规定的编译、测试、cppcheck 三步必须全部执行，不得跳过任一环节
+- 禁止对环境变量、路径、配置做硬编码绕过设计流程
+- 必须修改的文件必须全部修改，禁止以「后续再补」为由只做部分实现
+- task spec 中的 acceptance_criteria 必须逐条满足，不得自行降低标准
+
+### 正确完成声明
+
+输出结构化结果时，状态字段必须符合以下规则：
+- 只有全部验收标准满足 + 编译通过 + 测试通过 + cppcheck 无严重问题 = `completed`
+- 存在未满足的验收标准但代码已修改 = `failed`（不是 completed）
+- 代码中使用了上述任何降级措辞 = `failed`，且在风险字段中说明降级内容
+
 ## DEBUG 模式
 
 当 task type 为 `debug` 时进入此模式。

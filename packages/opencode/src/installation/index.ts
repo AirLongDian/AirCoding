@@ -178,6 +178,8 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | AppProce
 
     const result: Interface = {
       info: Effect.fn("Installation.info")(function* () {
+        // aircoding: no upstream check
+        if (InstallationChannel === "aircoding") return { version: InstallationVersion, latest: InstallationVersion }
         return {
           version: InstallationVersion,
           latest: yield* result.latest(),
@@ -218,6 +220,8 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | AppProce
         return "unknown" as Method
       }),
       latest: Effect.fn("Installation.latest")(function* (installMethod?: Method) {
+        // aircoding: never check opencode upstream for updates
+        if (InstallationChannel === "aircoding") return InstallationVersion
         const detectedMethod = installMethod || (yield* result.method())
 
         if (detectedMethod === "brew") {

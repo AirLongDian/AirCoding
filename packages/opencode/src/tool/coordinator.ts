@@ -246,7 +246,8 @@ interface TaskGraphTask {
 interface TaskGraph {
   version?: number
   tasks: TaskGraphTask[]
-  phases?: Array<{ id: number; name: string; milestone_review?: boolean }>
+  phases?: Array<{ id: number; name: string; milestone_review?: boolean; milestone_review_count?: number; milestone_satisfied?: boolean }>
+  architect_dispatch_total?: number
 }
 
 interface TickResult {
@@ -254,6 +255,7 @@ interface TickResult {
   worker_type: string
   status: string
   has_cppcheck?: boolean
+  output_text?: string
 }
 
 function readTaskGraph(projectDir: string): TaskGraph | null {
@@ -277,6 +279,114 @@ function writeTaskGraph(projectDir: string, graph: TaskGraph): void {
 function getDependencyIds(task: TaskGraphTask): string[] {
   if (!task.dependencies) return []
   return task.dependencies.map((d) => (typeof d === "string" ? d : d.task_id))
+}
+
+// --- Code gates: fallback keyword detection ---
+
+// Strong signals: almost always indicate design downgrade, flag unconditionally
+const FALLBACK_STRONG_CN = [
+  "先硬编码", "先跑通", "先回退", "先跳过", "暂时绕过",
+]
+
+const FALLBACK_STRONG_EN = [
+  "hardcode first", "hard-code for now", "get it working first",
+  "make it run first", "rollback first", "revert first",
+  "skip for now", "skip it for now", "bypass temporarily",
+]
+
+// Soft signals: ambiguous in isolation, only flag when accompanied by a completion claim
+const FALLBACK_SOFT_CN = [
+  "先这样", "以后再改", "以后补上", "兜底方案", "临时方案",
+]
+
+const FALLBACK_SOFT_EN = [
+  "for now", "just do this", "temporary solution",
+  "fix later", "change later", "refactor later",
+  "add later", "implement later",
+  "workaround", "fallback solution", "backup approach",
+  "interim approach", "stopgap",
+]
+
+// Completion markers: a Worker claiming "done" while using fallback language = hard violation
+const COMPLETION_MARKERS = [
+  "编译通过", "测试通过", "任务完成", "状态.*completed",
+  "tests? pass", "build.*(?:pass|succeed|success)",
+  "cppcheck.*(?:通过|pass|clean|no.*issue)",
+  "(?:completed|finished|done)\\s*$",
+  "审查结论.*PASS", "无严重问题",
+]
+
+function detectStrongFallback(text: string): string[] {
+  const lower = text.toLowerCase()
+  const found: string[] = []
+  for (const kw of FALLBACK_STRONG_CN) if (text.includes(kw)) found.push(kw)
+  for (const kw of FALLBACK_STRONG_EN) if (lower.includes(kw)) found.push(kw)
+  return found
+}
+
+function detectContextualFallback(text: string): string[] {
+  const lower = text.toLowerCase()
+  const hits: string[] = []
+  // Check if text contains any completion marker
+  const hasCompletion = COMPLETION_MARKERS.some((m) => new RegExp(m, "i").test(text))
+  if (!hasCompletion) return [] // no completion claim → not a downgrade attempt
+
+  // With completion markers present, soft keywords become actionable
+  for (const kw of FALLBACK_SOFT_CN) if (text.includes(kw)) hits.push(kw)
+  for (const kw of FALLBACK_SOFT_EN) if (lower.includes(kw)) hits.push(kw)
+
+  // Proximity check: soft keyword must be within ~300 chars of a completion marker
+  return hits.filter((kw) => {
+    const kwIdx = lower.indexOf(kw)
+    if (kwIdx === -1) return false
+    return COMPLETION_MARKERS.some((m) => {
+      const match = new RegExp(m, "i").exec(text)
+      if (!match) return false
+      return Math.abs(kwIdx - match.index) < 300
+    })
+  })
+}
+
+// TODO only flagged as fallback when it defers design-level implementation
+const TODO_FALLBACK_PATTERN = /TODO.*(?:以后|later|补|implement|fix|refactor|设计|design)/i
+
+function detectFallbackKeywords(text: string): string[] {
+  const strong = detectStrongFallback(text)
+  const contextual = detectContextualFallback(text)
+  const found = [...strong, ...contextual]
+  if (TODO_FALLBACK_PATTERN.test(text)) found.push("TODO (降级标记)")
+  return found
+}
+
+function hasCodeToDesignTable(text: string): boolean {
+  return (
+    text.includes("逐行对照") ||
+    text.includes("对照表") ||
+    text.includes("匹配状态") ||
+    /code.to.design.*table/i.test(text) ||
+    /design.*point.*code.*location/i.test(text) ||
+    /设计要点.*代码位置/i.test(text)
+  )
+}
+
+const SURFACE_EVIDENCE_PATTERNS = [
+  /(?:tests?\s*(?:all\s*)?(?:pass|green|passed))/i,
+  /(?:测试\s*(?:全绿|pass|通过))/,
+  /(?:function\s*exists|函数存在)/i,
+  /(?:file\s*exists|文件存在)/i,
+  /(?:typecheck|build|lint)\s*(?:passed|通过)/i,
+  /(?:looks?\s*(?:correct|right|fine)|看起来?正确|应该.*对)/i,
+  /(?:compilation\s*succeeded|编译成功)/i,
+]
+
+function detectSurfaceEvidenceOnlyPass(text: string): boolean {
+  const hasPassConclusion = /(?:PASS|审查结论.*PASS|通过.*审查)/i.test(text)
+  const hasDesignComparison = hasCodeToDesignTable(text)
+  // PASS without design comparison = surface evidence only
+  if (hasPassConclusion && !hasDesignComparison) return true
+  // Check if the ONLY reasoning given is surface evidence
+  const surfaceCount = SURFACE_EVIDENCE_PATTERNS.filter((p) => p.test(text)).length
+  return hasPassConclusion && surfaceCount >= 2 && !hasDesignComparison
 }
 
 function buildWorkerPrompt(task: TaskGraphTask): string {
@@ -320,21 +430,34 @@ function buildReviewPrompt(task: TaskGraphTask, workerResult: string): string {
   return [
     `## Code-to-Design 审查: ${task.title}`,
     "",
-    "请对照 .air/shared/plan/plan.md 中的架构设计，审查以下 Worker 实现：",
+    "请严格按照三层流程审查 Worker 实现（逐行对照 → 静态审查 → 测试验证）。",
+    "审查报告必须包含全部六个章节，缺少任一章节 = 无效审查，将被退回重审。",
     "",
     "### Worker 结果",
     workerResult.slice(0, 3000),
     "",
-    "### 审查要点",
-    "- 实现是否符合架构设计中的模块职责划分",
-    "- 依赖方向是否违反架构约束",
-    "- 公共接口是否与 plan.md 中声明的一致",
-    "- 是否有越界修改（修改了不应修改的模块）",
+    "### 审查输出要求（必须完整）",
     "",
-    "### 输出格式",
+    "一、Code-to-Design 逐行对照表（表格格式，每个设计要点一行）",
+    "   | # | 设计要点（来源） | 代码位置（文件:行号） | 匹配状态 | 说明 |",
+    "   匹配状态用：✅匹配 / ⚠️偏差 / ❌遗漏 / 🚫越界",
+    "",
+    "二、逐项审查（架构一致性、依赖方向、接口一致性、越界检查、功能完整性、降级关键词检测）",
+    "",
+    "三、静态审查（安全性：注入/越权/输入校验；正确性：边界/并发/资源；合规性：架构铁律/降级实现）",
+    "",
+    "四、测试/构建验证（仅在前三层全 PASS 后才填入）",
+    "",
+    "五、问题列表（FAIL 时，格式：[严重程度] 问题描述 — 文件:行号 — 设计依据）",
+    "",
+    "六、修复建议（FAIL 时，引用 plan.md 对应设计要点）",
+    "",
+    "### 禁止的判定依据",
+    "禁止以「测试pass」「函数存在」「文件存在」「build通过」「typecheck通过」「看起来正确」作为 PASS 理由。",
+    "必须逐行对照设计文档后才可判定。",
+    "",
+    "### 审查结论",
     "审查结论: PASS / FAIL",
-    "问题列表: (如有)",
-    "修复建议: (如有)",
   ].join("\n")
 }
 
@@ -351,6 +474,46 @@ function buildDebugPrompt(task: TaskGraphTask, errorInfo: string): string {
     "2. 分析错误根因",
     "3. 修复后重新编译 + 测试 + cppcheck",
     "4. 输出根因和修复方案",
+  ].join("\n")
+}
+
+function buildAntiFallbackPrompt(task: TaskGraphTask, keywords: string[]): string {
+  return [
+    `## 退回重做（降级实现）: ${task.title}`,
+    `类型: debug`,
+    "",
+    `### 检测到的降级关键词: ${keywords.join(", ")}`,
+    "",
+    "输出中包含以降级措辞描述的简化实现。以下行为不可接受：",
+    "- 以「先这样」「先跑通」「以后再改」「以后补上」「先回退」「先硬编码」「暂时绕过」「兜底方案」「临时方案」等理由使用简化实现",
+    '- 以 "for now" "temporary solution" "fix later" "workaround" "fallback" 等理由跳过设计',
+    "",
+    "### 要求",
+    "1. 移除所有以降级措辞描述的简化实现、硬编码、占位符",
+    "2. 严格按照 .air/shared/plan/plan.md 中的设计方案完整实现",
+    "3. 完整实现后重新编译 + 测试 + cppcheck --enable=all",
+    "4. 输出中不得再出现任何降级措辞",
+    `5. 本次是第 ${(task.retry_count ?? 0) + 1} 次重试，仍有 ${(task.constraints?.retry_budget ?? 3) - (task.retry_count ?? 0) - 1} 次机会`,
+  ].join("\n")
+}
+
+function buildReReviewPrompt(task: TaskGraphTask, reasonMissingTable: boolean, reasonSurfaceOnly: boolean): string {
+  const issues: string[] = []
+  if (reasonMissingTable) issues.push("- 审查报告缺少「逐行对照表」（code-to-design table），必须补充")
+  if (reasonSurfaceOnly) issues.push("- 审查报告仅凭表面证据（测试pass/函数存在/build通过）判定 PASS，不成立")
+  return [
+    `## 重审（审查报告不合格）: ${task.title}`,
+    "",
+    "上一次审查报告被调度器拒绝，原因：",
+    ...issues,
+    "",
+    "### 必须满足的要求",
+    "1. 必须生成完整的「一、Code-to-Design 逐行对照表」（表格格式，每个设计要点一行）",
+    "   表头: | # | 设计要点（来源） | 代码位置（文件:行号） | 匹配状态 | 说明 |",
+    "   匹配状态: ✅匹配 / ⚠️偏差 / ❌遗漏 / 🚫越界",
+    "2. 禁止以测试通过/函数存在/编译通过等表面证据作为 PASS 理由",
+    "3. 按三层流程执行：逐行对照 → 静态审查（安全/正确/合规）→ 测试验证",
+    "4. 审查报告必须包含全部六个章节（一至六）",
   ].join("\n")
 }
 
@@ -409,7 +572,42 @@ export const CoordinatorTickTool = Tool.define(
 
               transitions++
 
+              // Handle architect milestone_review results
+              if (result.worker_type === "architect") {
+                const phaseMatch = result.task_id.match(/^phase-(\d+)$/)
+                if (phaseMatch && graph.phases) {
+                  const phaseId = parseInt(phaseMatch[1], 10)
+                  const phaseObj = graph.phases.find((p) => p.id === phaseId)
+                  if (phaseObj) {
+                    phaseObj.milestone_satisfied = true
+                  }
+                }
+                continue
+              }
+
               if (result.worker_type === "worker" && result.status === "completed") {
+                // Gate A: detect fallback keywords in worker output
+                if (result.output_text) {
+                  const fallbackHits = detectFallbackKeywords(result.output_text)
+                  if (fallbackHits.length > 0) {
+                    const retryCount = task.retry_count ?? 0
+                    const budget = task.constraints?.retry_budget ?? 3
+                    if (retryCount < budget) {
+                      task.retry_count = retryCount + 1
+                      task.status = "pending"
+                      actions.push({
+                        action: "dispatch_debugger",
+                        task_id: task.id,
+                        subagent_type: "worker",
+                        prompt: buildAntiFallbackPrompt(task, fallbackHits),
+                        description: `退回重做（降级关键词: ${fallbackHits.slice(0, 3).join(", ")}）`,
+                      })
+                    } else {
+                      task.status = "blocked"
+                    }
+                    continue
+                  }
+                }
                 if (!result.has_cppcheck) {
                   task.status = "running"
                   actions.push({
@@ -449,9 +647,42 @@ export const CoordinatorTickTool = Tool.define(
                   task.status = "blocked"
                 }
               } else if (result.worker_type === "reviewer" && result.status === "completed") {
+                // Gate B: verify reviewer output contains code-to-design table
+                if (result.output_text) {
+                  const hasTable = hasCodeToDesignTable(result.output_text)
+                  const surfaceOnly = detectSurfaceEvidenceOnlyPass(result.output_text)
+                  if (!hasTable || surfaceOnly) {
+                    task.status = "pending_review"
+                    actions.push({
+                      action: "dispatch_reviewer",
+                      task_id: task.id,
+                      subagent_type: "reviewer",
+                      prompt: buildReReviewPrompt(task, !hasTable, surfaceOnly),
+                      description: `重审（${!hasTable ? "缺少逐行对照表" : "仅凭表面证据判定"}）`,
+                    })
+                    continue
+                  }
+                }
                 task.status = "completed"
               } else if (result.worker_type === "reviewer" && result.status === "failed") {
+                // If reviewer report lacks code-to-design table, re-dispatch reviewer
                 const retryCount = task.retry_count ?? 0
+                if (result.output_text && !hasCodeToDesignTable(result.output_text)) {
+                  if (retryCount < 2) {
+                    task.retry_count = retryCount + 1
+                    task.status = "pending_review"
+                    actions.push({
+                      action: "dispatch_reviewer",
+                      task_id: task.id,
+                      subagent_type: "reviewer",
+                      prompt: buildReReviewPrompt(task, true, false),
+                      description: `重审（审查报告缺少逐行对照表）`,
+                    })
+                  } else {
+                    task.status = "blocked"
+                  }
+                  continue
+                }
                 if (retryCount < 2) {
                   task.retry_count = retryCount + 1
                   task.status = "pending"
@@ -485,16 +716,23 @@ export const CoordinatorTickTool = Tool.define(
             })
           }
 
-          // Phase 3: Check phase milestones
+          // Phase 3: Check phase milestones (2 retries per phase, 5 total across all phases)
           let milestonePhase: number | undefined
           if (graph.phases) {
+            const totalArchitectDispatch = graph.architect_dispatch_total ?? 0
             for (const phase of graph.phases) {
               if (!phase.milestone_review) continue
+              if (phase.milestone_satisfied) continue   // architect already reviewed, OK
+              const phaseDispatchCount = phase.milestone_review_count ?? 0
+              if (phaseDispatchCount >= 2) continue     // per-phase retry budget exhausted
+              if (totalArchitectDispatch >= 5) continue  // global budget exhausted
               const phaseTasks = graph.tasks.filter((t) => t.phase === phase.id)
               const allDone = phaseTasks.every((t) => t.status === "completed")
               const anyRunning = phaseTasks.some((t) => t.status === "running" || t.status === "pending_review")
               if (allDone && phaseTasks.length > 0) {
                 milestonePhase = phase.id
+                phase.milestone_review_count = phaseDispatchCount + 1  // pre-increment on dispatch
+                graph.architect_dispatch_total = totalArchitectDispatch + 1
                 actions.push({
                   action: "milestone_review",
                   task_id: `phase-${phase.id}`,
@@ -539,6 +777,10 @@ export const CoordinatorTickTool = Tool.define(
           lines.push(`- 运行中: ${runningCount}`)
           lines.push(`- 待调度: ${pendingCount}`)
           lines.push(`- 阻塞: ${blockedCount}`)
+          if (graph.phases?.some((p) => p.milestone_review)) {
+            const totalUsed = graph.architect_dispatch_total ?? 0
+            lines.push(`- Architect 派发预算: 已用 ${totalUsed}/5（每阶段最多 2 次）`)
+          }
           lines.push("")
 
           if (actions.length > 0) {
