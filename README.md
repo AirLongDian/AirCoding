@@ -1,81 +1,119 @@
 <p align="center">
   <h1 align="center">AirCoding</h1>
 </p>
-<p align="center">基于 OpenCode v1.17.4 的多 Agent 协作 AI 编程系统</p>
+<p align="center">Deterministic Multi-Agent AI Coding System</p>
 <p align="center">
   <a href="http://git.airlongdian.fun/admin/AirCoding"><img alt="Gitea" src="https://img.shields.io/badge/Gitea-AirCoding-blue?style=flat-square" /></a>
+  <a href="http://git.airlongdian.fun/admin/AirCoding/releases/tag/0.1.0"><img alt="Release" src="https://img.shields.io/badge/release-0.1.0-green?style=flat-square" /></a>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> |
+  <a href="README.zh.md">简体中文</a>
 </p>
 
 ---
 
-### 概述
+## Overview
 
-AirCoding 是一个确定性调度为主、LLM 为辅的多 Agent 协作编程框架，以 C++ 为首个深度支持语言。核心设计原则：
+AirCoding is a **deterministic-first, LLM-assisted** multi-agent collaborative coding framework. C++ is the first deeply-supported language, with more to come.
 
-- **工具白名单是硬阻断**：每层 Agent 的能力由代码级权限控制，不依赖 Prompt 约束
-- **确定性调度优先**：正常流程走 DAG 状态机，异常/边界才调 LLM
-- **两层审查**：Worker 自验 + Reviewer Code-to-Design 审查
-- **证据门控**：cppcheck 强制（C++ 项目），取证后才能改代码（DEBUG 模式）
+Core design principles:
 
-### 架构
+- **Tool whitelist as hard gate**: Agent capabilities are enforced at the code level, not by prompt suggestion
+- **Deterministic scheduling first**: Normal flow runs through a DAG state machine; LLM is consulted only for exceptions and edge cases
+- **Two-layer review**: Worker self-verification + Reviewer Code-to-Design audit
+- **Evidence-gated debugging**: cppcheck mandatory (C++ projects); must collect evidence before modifying code (DEBUG mode)
+- **Anti-fallback**: Scheduler and Executor are forbidden from using "for now", "temporary solution", or any downgrade pattern to replace the design spec
+- **Mandatory Reviewer**: Reviewer is not optional — every Worker output goes through a three-layer review (Code-to-Design → Static Analysis → Test Verification) before it can pass
+
+## Architecture
 
 ```
-用户 → Main Agent (aircoding) → 协调派发
+User → Main Agent (aircoding) → dispatches
          │
-         ├─→ Architect（架构规划器）
-         │     产出：plan.md + task-graph.json + ADR + C4 文档
+         ├─→ Architect (architecture planner)
+         │     Outputs: plan.md + task-graph.json + ADR + C4 docs
          │
-         └─→ Scheduler（调度引擎）
-               │  coordinator_tick 确定性 DAG 调度
+         └─→ Scheduler (scheduling engine)
+               │  coordinator_tick: deterministic DAG scheduler
                │
-               ├─→ Worker（执行器/调试器）
-               │     EXECUTE: 写代码 → 编译 → 测试 → cppcheck
-               │     DEBUG:   取证 → 记录 → 修复 → 验证
+               ├─→ Worker (executor / debugger)
+               │     EXECUTE: write code → compile → test → cppcheck
+               │     DEBUG:   collect evidence → record → fix → verify
                │
-               └─→ Reviewer（代码审查器）
-                     对照 plan.md 做 Code-to-Design Review
+               └─→ Reviewer (code reviewer)
+                     Code-to-Design review against plan.md
+                     Three mandatory layers:
+                     1. Line-by-line Code-to-Design table
+                     2. Static analysis (security / correctness / compliance)
+                     3. Test / build verification
 ```
 
-### Agent 权限矩阵
+## Agent Permission Matrix
 
-| Agent | 可用工具 | 禁止工具 |
-|-------|---------|---------|
-| aircoding (Main) | read, glob, grep, task, question, web | write, edit, bash |
+| Agent | Allowed Tools | Denied Tools |
+|-------|--------------|--------------|
+| aircoding (Main) | read, glob, grep, task, question, web, coordinator_status, coordinator_tick | write, edit, bash |
 | Scheduler | read, glob, grep, task, coordinator_* | write, edit, bash |
 | Worker | read, write, edit, bash, glob, grep | task |
-| Architect | read, glob, grep, task, edit/write (.air/shared/plan/**) | bash, 代码文件写 |
+| Architect | read, glob, grep, task, edit/write (.air/shared/plan/**) | bash, source file write |
 | Reviewer | read, glob, grep | write, edit, bash, task |
 
-### 构建
+## Install
+
+### Binary (Linux x64)
 
 ```bash
-bun install          # 安装依赖
-bun typecheck        # 类型检查
-cd packages/opencode && bun test  # 运行测试
+# Download release
+wget http://git.airlongdian.fun/admin/AirCoding/releases/download/0.1.0/AirCoding-Alpha-0.1.0-linux-x64.tar.gz
+tar xzf AirCoding-Alpha-0.1.0-linux-x64.tar.gz
+cd AirCoding-Alpha-0.1.0 && ./install.sh
+
+aircoding --version  # → 0.1.0
 ```
 
-### 目录约定
+The binary installs to `~/.aircoding/` and does not conflict with opencode (`~/.opencode/`).
+
+### Build from Source
+
+```bash
+bun install          # install dependencies
+bun typecheck        # type check (29 packages, all pass)
+cd packages/opencode && OPENCODE_VERSION="0.1.0" OPENCODE_CHANNEL="aircoding" bun run script/build.ts --single --skip-embed-web-ui
+```
+
+## Directory Convention
 
 ```
-.air/shared/plan/plan.md              # 架构方案（Architect 产出）
-.air/shared/plan/task-graph.json      # 任务图（Architect 产出，Scheduler 执行）
-.air/shared/plan/docs/ADR-*.md       # 架构决策记录
-.air/shared/plan/docs/c4/            # C4 模型文档
-.air/local/state/scheduler-state.json # 调度器状态（实时落盘）
-.air/local/debug/debug-log.md        # 调试记录
+.air/shared/plan/plan.md               # architecture plan (Architect output)
+.air/shared/plan/task-graph.json       # task graph (Architect output, Scheduler reads)
+.air/shared/plan/docs/ADR-*.md         # architecture decision records
+.air/shared/plan/docs/c4/              # C4 model docs
+.air/local/state/scheduler-state.json  # scheduler state (realtime persistence)
+.air/local/debug/debug-log.md          # debug log
 ```
 
-### 设计文档
+## Design Docs
 
-详细设计文档在 `docs/` 目录：
+Detailed design documents are in `docs/`:
 
-- [架构设计 MVP](docs/aircoding-architecture-mvp.md)
-- [V2 实现计划](docs/implementation-plan.md)
-- [V2 设计（详细）](docs/airplanV2-Qwen3.7-Max设计.md)
-- [V1 基线](docs/baselineV1.md)
-- [AGENTS.md](docs/AGENTS.md)
-- [集成说明](docs/INTEGRATION.md)
+- [Architecture Design MVP](docs/aircoding-architecture-mvp.md)
+- [V2 Implementation Plan](docs/implementation-plan.md)
+- [V2 Design (detailed)](docs/airplanV2-Qwen3.7-Max设计.md)
+- [V1 Baseline](docs/baselineV1.md)
+- [Agent Constraints](docs/AGENTS.md)
+- [Integration Notes](docs/INTEGRATION.md)
 
-### 致谢
+## Key Constraints (Iron Rules)
 
-基于 [OpenCode](https://github.com/anomalyco/opencode) v1.17.4 fork。
+See `CLAUDE.md` for the full constraint specification. Summary:
+
+1. **Scheduler**: No fallback implementations. Must fully follow design specs. If the design doesn't cover a scenario, dispatch Architect to update the design first — never self-adjudicate in code.
+2. **Executor (Worker)**: No "get it working first / fix later" downgrades. Compile → test → cppcheck all mandatory. Fallback language in output = auto-FAIL.
+3. **Reviewer**: Mandatory, not optional. "Tests pass" / "function exists" / "build passed" are not valid reasons to PASS. Must produce a line-by-line Code-to-Design table. Coordinator code gates enforce this deterministically.
+4. **Architect loop prevention**: Milestone review has a 2-per-phase / 5-global dispatch budget with `milestone_satisfied` gate to prevent infinite architect dispatch loops.
+
+## Acknowledgments
+
+Forked from [OpenCode](https://github.com/anomalyco/opencode) v1.17.4.

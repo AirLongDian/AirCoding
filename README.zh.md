@@ -1,128 +1,119 @@
 <p align="center">
-  <a href="https://opencode.ai">
-    <picture>
-      <source srcset="packages/console/app/src/asset/logo-ornate-dark.svg" media="(prefers-color-scheme: dark)">
-      <source srcset="packages/console/app/src/asset/logo-ornate-light.svg" media="(prefers-color-scheme: light)">
-      <img src="packages/console/app/src/asset/logo-ornate-light.svg" alt="OpenCode logo">
-    </picture>
-  </a>
+  <h1 align="center">AirCoding</h1>
 </p>
-<p align="center">开源的 AI Coding Agent。</p>
+<p align="center">确定性优先、LLM 为辅的多 Agent 协作 AI 编程系统</p>
 <p align="center">
-  <a href="https://opencode.ai/discord"><img alt="Discord" src="https://img.shields.io/discord/1391832426048651334?style=flat-square&label=discord" /></a>
-  <a href="https://www.npmjs.com/package/opencode-ai"><img alt="npm" src="https://img.shields.io/npm/v/opencode-ai?style=flat-square" /></a>
-  <a href="https://github.com/anomalyco/opencode/actions/workflows/publish.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/anomalyco/opencode/publish.yml?style=flat-square&branch=dev" /></a>
+  <a href="http://git.airlongdian.fun/admin/AirCoding"><img alt="Gitea" src="https://img.shields.io/badge/Gitea-AirCoding-blue?style=flat-square" /></a>
+  <a href="http://git.airlongdian.fun/admin/AirCoding/releases/tag/0.1.0"><img alt="Release" src="https://img.shields.io/badge/release-0.1.0-green?style=flat-square" /></a>
 </p>
 
 <p align="center">
   <a href="README.md">English</a> |
-  <a href="README.zh.md">简体中文</a> |
-  <a href="README.zht.md">繁體中文</a> |
-  <a href="README.ko.md">한국어</a> |
-  <a href="README.de.md">Deutsch</a> |
-  <a href="README.es.md">Español</a> |
-  <a href="README.fr.md">Français</a> |
-  <a href="README.it.md">Italiano</a> |
-  <a href="README.da.md">Dansk</a> |
-  <a href="README.ja.md">日本語</a> |
-  <a href="README.pl.md">Polski</a> |
-  <a href="README.ru.md">Русский</a> |
-  <a href="README.bs.md">Bosanski</a> |
-  <a href="README.ar.md">العربية</a> |
-  <a href="README.no.md">Norsk</a> |
-  <a href="README.br.md">Português (Brasil)</a> |
-  <a href="README.th.md">ไทย</a> |
-  <a href="README.tr.md">Türkçe</a> |
-  <a href="README.uk.md">Українська</a> |
-  <a href="README.bn.md">বাংলা</a> |
-  <a href="README.gr.md">Ελληνικά</a> |
-  <a href="README.vi.md">Tiếng Việt</a>
+  <a href="README.zh.md">简体中文</a>
 </p>
 
-[![OpenCode Terminal UI](packages/web/src/assets/lander/screenshot.png)](https://opencode.ai)
-
 ---
 
-### 安装
+## 概述
 
-```bash
-# 直接安装 (YOLO)
-curl -fsSL https://opencode.ai/install | bash
+AirCoding 是一个**确定性调度为主、LLM 为辅**的多 Agent 协作编程框架，C++ 为首个深度支持语言。
 
-# 软件包管理器
-npm i -g opencode-ai@latest        # 也可使用 bun/pnpm/yarn
-scoop install opencode             # Windows
-choco install opencode             # Windows
-brew install anomalyco/tap/opencode # macOS 和 Linux（推荐，始终保持最新）
-brew install opencode              # macOS 和 Linux（官方 brew formula，更新频率较低）
-sudo pacman -S opencode            # Arch Linux (Stable)
-paru -S opencode-bin               # Arch Linux (Latest from AUR)
-mise use -g opencode               # 任意系统
-nix run nixpkgs#opencode           # 或用 github:anomalyco/opencode 获取最新 dev 分支
+核心设计原则：
+
+- **工具白名单是硬阻断**：每层 Agent 的能力由代码级权限控制，不依赖 Prompt 约束
+- **确定性调度优先**：正常流程走 DAG 状态机，异常和边界才调 LLM
+- **两层审查**：Worker 自验 + Reviewer Code-to-Design 审查
+- **证据门控**：cppcheck 强制（C++ 项目），取证后才能改代码（DEBUG 模式）
+- **禁降级兜底**：调度器和执行器严禁以「先这样」「先跑通」「以后再改」「for now」「temporary solution」等任何理由使用降级方案代替设计实现
+- **审查器强制调用**：审查器不可跳过、不可默认通过，必须逐行对照设计方案后，再经静态审查和测试验证，全部通过才能放行
+
+## 架构
+
+```
+用户 → Main Agent (aircoding) → 协调派发
+         │
+         ├─→ Architect（架构规划器）
+         │     产出：plan.md + task-graph.json + ADR + C4 文档
+         │
+         └─→ Scheduler（调度引擎）
+               │  coordinator_tick 确定性 DAG 调度
+               │
+               ├─→ Worker（执行器 / 调试器）
+               │     EXECUTE: 写代码 → 编译 → 测试 → cppcheck
+               │     DEBUG:   取证 → 记录 → 修复 → 验证
+               │
+               └─→ Reviewer（代码审查器）
+                     对照 plan.md 做 Code-to-Design 审查
+                     三层强制流程：
+                     1. Code-to-Design 逐行对照表
+                     2. 静态审查（安全性 / 正确性 / 合规性）
+                     3. 测试 / 构建验证
 ```
 
-> [!TIP]
-> 安装前请先移除 0.1.x 之前的旧版本。
+## Agent 权限矩阵
 
-### 桌面应用程序 (BETA)
+| Agent | 可用工具 | 禁止工具 |
+|-------|---------|---------|
+| aircoding (Main) | read, glob, grep, task, question, web, coordinator_status, coordinator_tick | write, edit, bash |
+| Scheduler | read, glob, grep, task, coordinator_* | write, edit, bash |
+| Worker | read, write, edit, bash, glob, grep | task |
+| Architect | read, glob, grep, task, edit/write (.air/shared/plan/**) | bash, 源代码文件写 |
+| Reviewer | read, glob, grep | write, edit, bash, task |
 
-OpenCode 也提供桌面版应用。可直接从 [发布页 (releases page)](https://github.com/anomalyco/opencode/releases) 或 [opencode.ai/download](https://opencode.ai/download) 下载。
+## 安装
 
-| 平台                  | 下载文件                           |
-| --------------------- | ---------------------------------- |
-| macOS (Apple Silicon) | `opencode-desktop-mac-arm64.dmg`   |
-| macOS (Intel)         | `opencode-desktop-mac-x64.dmg`     |
-| Windows               | `opencode-desktop-windows-x64.exe` |
-| Linux                 | `.deb`、`.rpm` 或 AppImage         |
-
-```bash
-# macOS (Homebrew Cask)
-brew install --cask opencode-desktop
-# Windows (Scoop)
-scoop bucket add extras; scoop install extras/opencode-desktop
-```
-
-#### 安装目录
-
-安装脚本按照以下优先级决定安装路径：
-
-1. `$OPENCODE_INSTALL_DIR` - 自定义安装目录
-2. `$XDG_BIN_DIR` - 符合 XDG 基础目录规范的路径
-3. `$HOME/bin` - 如果存在或可创建的用户二进制目录
-4. `$HOME/.opencode/bin` - 默认备用路径
+### 二进制（Linux x64）
 
 ```bash
-# 示例
-OPENCODE_INSTALL_DIR=/usr/local/bin curl -fsSL https://opencode.ai/install | bash
-XDG_BIN_DIR=$HOME/.local/bin curl -fsSL https://opencode.ai/install | bash
+# 下载发布包
+wget http://git.airlongdian.fun/admin/AirCoding/releases/download/0.1.0/AirCoding-Alpha-0.1.0-linux-x64.tar.gz
+tar xzf AirCoding-Alpha-0.1.0-linux-x64.tar.gz
+cd AirCoding-Alpha-0.1.0 && ./install.sh
+
+aircoding --version  # → 0.1.0
 ```
 
-### Agents
+二进制安装到 `~/.aircoding/`，与 opencode（`~/.opencode/`）互不冲突。
 
-OpenCode 内置两种 Agent，可用 `Tab` 键快速切换：
+### 从源码构建
 
-- **build** - 默认模式，具备完整权限，适合开发工作
-- **plan** - 只读模式，适合代码分析与探索
-  - 默认拒绝修改文件
-  - 运行 bash 命令前会询问
-  - 便于探索未知代码库或规划改动
+```bash
+bun install          # 安装依赖
+bun typecheck        # 类型检查（29 包，全部通过）
+cd packages/opencode && OPENCODE_VERSION="0.1.0" OPENCODE_CHANNEL="aircoding" bun run script/build.ts --single --skip-embed-web-ui
+```
 
-另外还包含一个 **general** 子 Agent，用于复杂搜索和多步任务，内部使用，也可在消息中输入 `@general` 调用。
+## 目录约定
 
-了解更多 [Agents](https://opencode.ai/docs/agents) 相关信息。
+```
+.air/shared/plan/plan.md               # 架构方案（Architect 产出）
+.air/shared/plan/task-graph.json       # 任务图（Architect 产出，Scheduler 执行）
+.air/shared/plan/docs/ADR-*.md         # 架构决策记录
+.air/shared/plan/docs/c4/              # C4 模型文档
+.air/local/state/scheduler-state.json  # 调度器状态（实时落盘）
+.air/local/debug/debug-log.md          # 调试记录
+```
 
-### 文档
+## 设计文档
 
-更多配置说明请查看我们的 [**官方文档**](https://opencode.ai/docs)。
+详细设计文档在 `docs/` 目录：
 
-### 参与贡献
+- [架构设计 MVP](docs/aircoding-architecture-mvp.md)
+- [V2 实现计划](docs/implementation-plan.md)
+- [V2 设计（详细）](docs/airplanV2-Qwen3.7-Max设计.md)
+- [V1 基线](docs/baselineV1.md)
+- [Agent 约束规则](docs/AGENTS.md)
+- [集成说明](docs/INTEGRATION.md)
 
-如有兴趣贡献代码，请在提交 PR 前阅读 [贡献指南 (Contributing Docs)](./CONTRIBUTING.md)。
+## 约束铁律
 
-### 基于 OpenCode 进行开发
+详见 `CLAUDE.md`。摘要：
 
-如果你在项目名中使用了 “opencode”（如 “opencode-dashboard” 或 “opencode-mobile”），请在 README 里注明该项目不是 OpenCode 团队官方开发，且不存在隶属关系。
+1. **调度器**：禁止降级兜底，必须完全遵循设计方案。设计未覆盖的场景先派 Architect 更新设计，不得在代码中自行裁决。
+2. **执行器**：禁止以「先跑通」「以后再改」「以后补上」「for now」「fix later」等理由使用简化实现。编译→测试→cppcheck 三步不可跳过。输出含降级措辞直接 FAIL。
+3. **审查器**：强制调用，不可跳过。「测试 pass」「函数存在」「build 通过」不得作为 PASS 依据。必须输出 Code-to-Design 逐行对照表。代码门确定性执行此规则。
+4. **防无限循环**：Architect 里程碑审查设有 每阶段2次 / 全局5次 的派发预算 + `milestone_satisfied` 门控，防止 Scheduler 和 Architect 之间无限循环。
 
----
+## 致谢
 
-**加入我们的社区** [飞书](https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=738j8655-cd59-4633-a30a-1124e0096789&qr_code=true) | [X.com](https://x.com/opencode)
+基于 [OpenCode](https://github.com/anomalyco/opencode) v1.17.4 fork。
