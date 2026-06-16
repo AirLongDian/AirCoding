@@ -16,7 +16,29 @@
 
 ## Overview
 
-AirCoding is a **deterministic-first, LLM-assisted** multi-agent collaborative coding framework. C++ is the first deeply-supported language, with more to come.
+AirCoding is a semi-automated development agent I built based on my own workflow. Its main goal is to solve Vibe Coding's core problems — poor code quality and high model requirements — through an engineering-driven approach. The aim is to use low-cost models concurrently to complete small to medium-sized projects.
+
+This idea has just barely gotten off the ground. Due to time constraints, the Alpha release is a fork of opencode with direct modifications. It's still constrained by opencode's framework and far from the ideal design. Bugs are plenty — I'll fix them as I find them. It works well enough for now.
+
+When I have more free time, I'll need to build an agent from scratch. The current framework imposes too many limitations.
+
+
+
+
+
+## Acknowledgments
+
+Thanks to Player Xiao Zhang for calling me while I was on the toilet, which cleared my mind.
+
+Thanks to Mr. Ran, Mr. Ze, Mr. Ding, and Mr. Zhe for enduring a 10-game losing streak in League of Legends while playing with me. This is the power of friendship and bonds — I'm going to find an Evolution Crystal to super-evolve as repayment.
+
+Thanks in advance to Mr. Fan Xiaowen, who is currently researching Go for building agent frameworks. I plan to steal his work once he's done (doge).
+
+---
+
+The following is AI-generated.
+
+## ## OOvveerrvviieeww
 
 Core design principles:
 

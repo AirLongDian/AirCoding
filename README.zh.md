@@ -1,7 +1,7 @@
 <p align="center">
   <h1 align="center">AirCoding</h1>
 </p>
-<p align="center">确定性优先、LLM 为辅的多 Agent 协作 AI 编程系统</p>
+<p align="center">确定性优先、LLM 为辅的多 Agent 协作半自动并发 AI 编程系统</p>
 <p align="center">
   <a href="http://git.airlongdian.fun/admin/AirCoding"><img alt="Gitea" src="https://img.shields.io/badge/Gitea-AirCoding-blue?style=flat-square" /></a>
   <a href="http://git.airlongdian.fun/admin/AirCoding/releases/tag/0.1.0"><img alt="Release" src="https://img.shields.io/badge/release-0.1.0-green?style=flat-square" /></a>
@@ -13,6 +13,30 @@
 </p>
 
 ---
+
+## ## 概概述述
+
+AirCoding 是我基于自己工作流做的一个半自动开发 Agent ，其主要目的在于以工程化的思路解决 Vibe Coding 交付代码差、对模型性能要求高的问题，旨在用低成本的模型并发完成中小项目开发。
+
+目前这个想法刚刚搓通，而且因为时间问题，Alpha版本是 fork opencode 直接改的，受限于opencode的框架还没能完全实现理想的设计，bug估计也不少，发现一个改一个先凑合用吧。
+
+等多会闲下来还是得自己从头搓 Agent ，现有方案制约太大了。
+
+
+
+
+
+## 致谢
+
+感谢玩家小张在我拉屎时和我打电话，令我思路畅通。
+
+感谢mr冉，mr泽，mr丁，mr哲打LOL时被我坑到十连败，这就是友情和羁绊的力量啊，我准备找个进化水晶超进化一下以示报答。
+
+提前感谢 mr樊小文 ，因为他最近在研究 go 语言搓 Agent 框架，我准备等他做完偷来用（doge
+
+---
+
+以下为 AI 生成
 
 ## 概述
 
