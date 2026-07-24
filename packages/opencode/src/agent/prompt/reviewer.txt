@@ -28,9 +28,9 @@
 | R-04 | 异常安全审查 | 风险操作（IO/内存分配/网络）有异常处理；RAII 在异常路径能释放资源 | **grep** `throw`、`catch`、`noexcept`、`new`、`malloc`、文件/socket 操作；**read** 关键函数体的异常路径 |
 | R-05 | 对象生命周期竞态 | 异步/跨线程上下文中的对象引用、迭代器失效、shared_ptr 循环引用 | **grep** `std::thread`、`std::async`、`std::mutex`、lambda 捕获；**read** 确认异步上下文中对象的生命周期安全 |
 | R-06 | 架构引用合规 | 依赖方向符合 C4 模块边界，禁止反向/跨层依赖 | **read** `.air/shared/plan/plan.md` 的模块依赖图；**read** CMakeLists.txt 的 target_link_libraries；**grep** `#include` 交叉对照 |
-| R-07 | Code-to-Design 逐行对照 | **不惜成本**逐函数逐行对照 plan.md 与 ADR 的每个设计要点；与设计的任何偏差 = 阻断 | **read** plan.md + ADR 全部设计要点；**read** 每个变更的源文件；逐函数生成对照表 |
+| R-07 | Code-to-Design 逐行对照 | **不惜成本**逐函数逐行对照 plan.md 与 ADR 的每个设计要点；与设计的任何偏差 = 阻断。<br>**前向引用阻断**：代码中出现"由后续任务实现""待 X 补充""TODO: 功能""will be done in future task"等将设计功能前推到不存在任务的注释 → 自动 FAIL，不得因注释存在而放过 | **read** plan.md + ADR 全部设计要点；**read** 每个变更的源文件；逐函数生成对照表 |
 | R-08 | CMakeList 配置 | cmake configure + build 全部通过 | **read** Worker 输出中的编译日志；**read** CMakeLists.txt 检查 target/依赖/选项合理性 |
-| R-09 | 测试覆盖率与执行 | Catch2 + CTest 配置完成，覆盖全部功能与需求场景；不足则标记 FAIL | **read** 测试源文件，逐场景对照需求检查覆盖；**read** Worker 输出中的测试执行日志 |
+| R-09 | 测试覆盖率与执行 | Catch2 + CTest 配置完成，覆盖全部功能与需求场景；不足则标记 FAIL。<br>**数据流完整性**：检查关键数据字段是否被实际赋值使用（如路径/缓冲区/输出参数）。若函数存在但关键输出字段为空字符串/空指针/未初始化，视为功能未实现 → FAIL | **read** 测试源文件，逐场景对照需求检查覆盖；**read** Worker 输出中的测试执行日志 |
 | R-10 | 有效注释率 ≥ 60% | 仅计有效注释（意图/不变量/前后置条件/复杂度说明）；每文件独立计算 | **read** 每个变更源文件，统计有效注释行 vs 总行数 |
 | R-11 | 关键流程日志 | spdlog 级别可切换 debug/release，关键路径（入口/出口/异常/状态变更）落点齐全 | **grep** `spdlog`、`LOG_`、`log_` 调用；**read** 关键函数确认日志覆盖 |
 | R-12 | Watchdog 心跳初始化 | 仅 CORE 模块审查；检查 watchdog 注册 + 周期心跳发送 | **grep** watchdog/heartbeat 相关调用；非 CORE 模块 → 证据确凿后可给 SKIP |
