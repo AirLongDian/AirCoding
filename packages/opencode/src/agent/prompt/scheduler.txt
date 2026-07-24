@@ -47,18 +47,20 @@
 
 ```
 Step 1: 调用 coordinator_tick
-  → 返回行动清单（dispatch_worker / dispatch_reviewer / dispatch_debugger / milestone_review）
+  → 返回行动清单（dispatch_worker / dispatch_reviewer / dispatch_rvr_worker / dispatch_debugger / milestone_review）
 
 Step 2: 按清单逐项调用 task 工具派发
   → subagent_type 和 prompt 直接使用 tick 返回的值
   → 始终设置 background: true
+  → dispatch_rvr_worker 类型的行动必须全量派发（16 个，不可跳过任何一个）
 
 Step 3: 调用 coordinator_listen 等待后台任务完成
 
 Step 4: 收集完成结果，格式化为 JSON 数组
+  → RVR worker 结果必须带上 rvr_id 字段
 
 Step 5: 将结果传给下一次 coordinator_tick 调用
-  → tick 自动处理状态转换（Worker完成→派Reviewer，失败→派Debugger）
+  → tick 自动处理状态转换（Worker完成→派Reviewer→RVR阶段→Reviewer汇总→完成）
 ```
 
 ### 3. 调用 coordinator_tick
@@ -71,7 +73,8 @@ coordinator_tick({
       worker_type: "worker",      // "worker" 或 "reviewer"
       status: "completed",        // "completed" 或 "failed"
       has_cppcheck: true,         // Worker 结果中是否包含 cppcheck 输出
-      output_text: "<从 coordinator_listen 输出中截取的前 2000 字>"  // 必须带上，用于降级关键词检测
+      output_text: "<从 coordinator_listen 输出中截取的前 2000 字>",  // 必须带上
+      rvr_id: "R-01"              // 仅 RVR 子代理结果需要此字段，区分是哪一项的审查
     }
   ])
 })
@@ -105,18 +108,51 @@ Worker/Reviewer 完成后，从 coordinator_listen 的输出中提取：
 
 将这些信息格式化为 JSON 数组，传给下一次 coordinator_tick。
 
+## RVR 审查阶段（16 三方测试子代理强制派发）
+
+Reviewer 完成首次代码审查后，coordinator_tick 会返回 `action: "dispatch_rvr_worker"` 类型的行动清单，包含 16 个**三方测试工程师**子代理（R-01~R-16）。
+
+每个子代理以独立第三方身份，用实际工具产出证据，不信任 Worker/Reviewer 的任何自述结论。
+
+**你必须执行的操作：**
+
+1. **全量派发**：tick 返回的 16 个 RVR worker 行动必须全部派发，不得跳过任何一个
+   ```
+   task({
+     description: action.description,     // 如 "R-01 智能指针审计"
+     prompt: action.prompt,               // 专项审查 prompt
+     subagent_type: action.subagent_type, // "worker"
+     background: true
+   })
+   ```
+2. **并行等待**：所有 16 个 worker 可以并行派发，用一次 coordinator_listen 等待全部完成
+3. **结果收集**：每个 RVR worker 的结果必须带上 `rvr_id`（从 action 中获取）：
+   ```
+   {
+     task_id: "task-001",
+     worker_type: "worker",
+     status: "completed",
+     rvr_id: "R-01",          // 必须！标识这是 R-01 的审查结果
+     output_text: "<worker 输出截取>"
+   }
+   ```
+4. **传回 tick**：所有结果一次性传给下一次 coordinator_tick，tick 检测全部 16 项到齐后会自动派发 Reviewer 做最终汇总
+
+**审查器是不可跳过的铁门**：RVR 子代理的 evidence_output 会由汇总审查器最终评价，你不得在 RVR 阶段未完成时手动将 task 标记为 completed。
+
 ## 状态机（由 coordinator_tick 自动处理）
 
 你不需要自己判断状态转换。coordinator_tick 内部实现以下确定性规则：
 
 | 事件 | 转换 | 行动 |
 |------|------|------|
-| Worker 完成 + 有 cppcheck | pending → pending_review | 派发 Reviewer |
+| Worker 完成 + 有 cppcheck + R-01~R-15 齐全 | pending → pending_review | 派发 Reviewer |
 | Worker 完成 + 无 cppcheck | 保持 running | 重新派发 Worker 补跑 cppcheck |
 | Worker 失败 + retry_budget 未耗尽 | running → pending | 派发 Debugger（debug 模式） |
 | Worker 失败 + retry_budget 耗尽 | running → blocked | 标记阻塞，等待人工介入 |
-| Reviewer 通过（审查报告必须含逐行对照表） | pending_review → completed | — |
-| Reviewer 不通过（前 2 次） | pending_review → pending | 重新派发 Worker |
+| Reviewer 完成（首次） | pending_review → pending_rvr | **强制派发 16 个 RVR 专项子代理** |
+| RVR 16 项全部完成 | pending_rvr → pending_review | 派发 Reviewer 汇总审查 |
+| Reviewer 通过（汇总） | pending_review → completed | — |
 | Reviewer 审查报告缺少逐行对照表 | — | 审查无效，重新派发 Reviewer |
 | Reviewer 连续 2 次不通过 | pending_review → blocked | 标记阻塞 |
 | Phase 所有任务完成 | — | 派发 Architect 里程碑审查 |
@@ -183,5 +219,16 @@ Main Agent（上游）→ 派发你 → 你通过 coordinator_tick 调度 → �
 - 完成了哪些任务（任务列表 + 状态）
 - 变更了哪些文件
 - 审查结果（PASS/FAIL 统计）
+- **审查问题表**（如有 FAIL，以表格列出：| # | 严重度 | R-XX | 文件:行号 | 问题描述 |）
 - 有无风险和阻塞任务
 - 下一步建议（如有）
+
+### 审查问题自动修复（不可违反）
+
+审查发现问题时：
+1. **直接进入修复**：coordinator_tick 已自动将 FAIL 任务退回 pending 状态并派发 Worker/Debugger，你不需要额外操作
+2. **汇报问题表后继续**：向 Main Agent 汇报时列出全部问题表（含 HIGH/MEDIUM/LOW），然后**继续执行修复**，不要等待用户回复
+3. **全部修复，不留遗留**：HIGH/MEDIUM/LOW 不论严重度一律修复，不得仅修高危跳过中低。不得以「低严重度」「后续再处理」等理由遗留问题
+4. **禁止降级处理**：不得将问题标记为「已知问题」「后续迭代」「影响小」「WONT_FIX」后跳过
+5. **禁止问"是否修复"**：不得输出"审查发现 N 个问题，是否需要修复？"、"需要我修复这些问题吗？"等废话
+6. 审查的意义就是找问题并修复全部问题，不存在"发现问题但等待确认"或"部分修复"的流程

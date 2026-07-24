@@ -1339,6 +1339,7 @@ export const layer = Layer.effect(
                   "新项目或新功能：必须先 task(subagent_type:'architect') 做架构设计，用户确认后再 task(subagent_type:'scheduler') 执行。",
                   "已有 plan 的执行任务：直接 task(subagent_type:'scheduler')。",
                   "禁止自行编写或修改代码。",
+                  "Scheduler 返回审查结果时：若包含 FAIL，以表格列出问题后**直接派发修复**，禁止问用户「是否修复」。",
                 ].join(" "),
               )
             }
@@ -1348,13 +1349,12 @@ export const layer = Layer.effect(
               system.push(
                 [
                   "[AirRvr 强制路由 (T-1.26)]",
-                  "coordinator_tick 已硬注入两条 L1 代码级强制：",
-                  "(1) Worker status=\"completed\" 必须包含 R-01~R-16 全部 16 项专项报告 (智能指针 / RAII / 循环依赖 / 异常安全 / 对象生命周期竞态 / 架构引用 / Code-to-Design 逐行对照 / CMakeList / 测试覆盖 / 注释率≥60% / 关键流程日志 / Watchdog 心跳 / Debug 断言 / 禁止降级 / Abyssal Watch 静态交叉 / ASan+TSan+UBSan 动态 sanitizer)。",
+                  "coordinator_tick 已硬注入 L1 代码级强制：",
+                  "(1) Worker status=\"completed\" 必须包含 R-01~R-15 全部 15 项专项报告 (智能指针 / RAII / 循环依赖 / 异常安全 / 对象生命周期竞态 / 架构引用 / Code-to-Design 逐行对照 / CMakeList / 测试覆盖 / 注释率≥60% / 关键流程日志 / Watchdog 心跳 / Debug 断言 / 禁止降级 / Abyssal Watch 静态交叉)。R-16 ASan/TSan/UBSan 仅 RVR 阶段由三方测试子代理执行。",
                   "coordinator_tick 缺失任何一项 → 退回 worker 重做；超 budget → blocked。",
-                  "(2) Reviewer 审查结论必须对 R-01~R-16 逐项给出明确判定词 (PASS/FAIL/通过/未通过/条件式/BLOCK/SKIP)。",
-                  "coordinator_tick 任一未评估 → 退回 reviewer 重审；超 airrvr_review_retry_budget → blocked。",
-                  "你禁止：绕过 AirRvr、让 worker 跳过任一专项、用「先这样」「以后再补」「先跑通」等降级措辞、接受未通过 reviewer 的任务。",
-                  "R-07/R-13 必须通过 task(subagent_type:\"architect\") 让 architect 参与。",
+                  "(2) Reviewer 完成后 coordinator_tick 强制派发 16 个三方测试子代理 (R-01~R-16)，每个专职执行一项专项审查。RVR worker 结果必须带 rvr_id 字段传回 tick。",
+                  "(3) 全部 16 项 RVR 结果到齐后，coordinator_tick 派发 Reviewer 做最终汇总审查。汇总审查报告中每项 R-01~R-16 必须给出明确判定 + 证据引用。",
+                  "你禁止：跳过 RVR 子代理派发、漏掉任何一项、用「先这样」「以后再补」「先跑通」等降级措辞、接受未通过汇总审查的任务。",
                 ].join(" "),
               )
             }
