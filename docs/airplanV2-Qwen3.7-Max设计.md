@@ -2293,7 +2293,7 @@ air_runtime/
 | T-1.23 | Merge → TaskGraph 状态同步（merge 后更新 task-graph.json 节点 status） | P1-25 | 0.5d |
 | T-1.24 | AirCoding Fork 更新通道隔离（重写 update channel、npm scope、GitHub API 目标；**已落地至 `air_runtime/update_channel.py` + 启动探针**） | P0-11 | 1d ✅ |
 | T-1.25 | 强制文档回写机制（`MandatoryWriteBack` + 各角色角色清单 + 合并阶段原子同步；**已落地至 `air_runtime/doc_sync.py` + INV-WB-1/2/3**） | P0-12 | 2d ✅ |
-| T-1.26 | AirRvr 升级为 16 项专项子代理派发机制（含 Abyssal Watch、ASan/TSan/UBSan 集成；**双轨落地**：① L1 代码级强制 = `coordinator.ts` 中 `validateAirRvrReports` + `validateAirRvrReviewCoverage` 两条纯校验函数 + `TickResult.airrvr_reports?:string[]` 字段 + `TaskGraphTask.airrvr_review_retry_count` 计数器；② soft route = `prompt.ts` 中向 `scheduler` 注入 AirRvr 强制路由 system prompt） | P1-26, P1-27 | 3d ✅ |
+| T-1.26 | AirRvr 升级为 16 项专项子代理派发机制（含 Abyssal Watch、ASan/TSan/UBSan 集成；**v0.0.2 演进为三段式**：Worker 门禁 R-01~R-15 → Reviewer code-to-design → RVR 16 三方测试子代理强制派发 → 汇总 Reviewer；**双轨落地**：① L1 代码级强制 = `coordinator.ts` RVR 状态机 + `validateAirRvrReports` / `validateAirRvrReviewCoverage` + `TickResult.rvr_id`；② soft route = `prompt.ts` + `scheduler.txt` + `main.txt` AirRvr 强制路由 system prompt） | P1-26, P1-27 | 3d ✅ |
 
 **验证标准**：所有现有项目（DecodePlayer 系列）的 state.json 在 V2 引擎下不损坏；AirXDB 假阳性率降至 0。
 
@@ -2301,21 +2301,23 @@ air_runtime/
 
 CLAUDE.md 第 3.1 节"对 LLM 自觉性 0 信任"——因此 T-1.26 的 Python 层 API（`AirRvrDispatcher` / `AbyssalWatchClient` / `SanitizerRunner`）仅作为测试辅助；真正"强制路由"的 L1 代码级强制落在 `packages/opencode/src/tool/coordinator.ts` 与 `packages/opencode/src/session/prompt.ts` 的 TS 二进制内。
 
-已落地的 TS 硬门禁：
+已落地的 TS 硬门禁（v0.0.2 演进）：
 
 | 位置 | 约束 | 失败处理 |
 |---|---|---|
-| `coordinator.ts:validateAirRvrReports` (纯函数) + `validateAirRvrReviewCoverage` (纯函数) | 文本扫描 R-01~R-16 16 项编号，400 字符窗口内寻找判定词 | - |
-| `coordinator.ts` 第 832 行附近 Worker 完成分支 | `task.status` 进入 `pending_review` 之前必须先 `validateAirRvrReports(...)` 通过 | 缺失任一项 → `dispatch_worker` 退回（带 `buildAirRvrWorkerRetryPrompt`）；超 `constraints.retry_budget`（默认 3）→ `blocked` |
-| `coordinator.ts` 第 897 行附近 Reviewer 完成分支 | `task.status` 进入 `completed` 之前必须先 `validateAirRvrReviewCoverage(...)` 通过 | 任一未评估 → `dispatch_reviewer` 重审（带 `buildAirRvrReviewerReReviewPrompt`）；超 `constraints.airrvr_review_retry_budget`（默认 2）→ `blocked` |
-| `prompt.ts` scheduler system prompt | "[AirRvr 强制路由 (T-1.26)]" 段落明确声明两条 L1 Gate + 禁止绕过 + R-07/R-13 必须 architect 参与 | Soft route（与 TS 硬门禁相辅，但不替代） |
-| `TickResult.airrvr_reports?: string[]` | scheduler 可显式声明提交的 R-XX 报告编号（与文本扫描互补；**LLM 不可信，仍以文本扫描为准**） | - |
-| `TaskGraphTask.airrvr_review_retry_count?: number` | 独立于 worker `retry_count` 的 reviewer 重审计数 | - |
+| `coordinator.ts:validateAirRvrReports` | 文本扫描 R-01~R-15（Worker 门禁，不含 R-16） | 缺失任一项 → `dispatch_worker` 退回；超 budget → blocked |
+| `coordinator.ts` Worker 完成分支 | Worker gate: 降级关键词检测 → cppcheck 检测 → `validateAirRvrReports` 三关全过才进入 `pending_review` | 任一未过 → retry / blocked |
+| `coordinator.ts` Reviewer 完成分支 (v0.0.2 重构) | Reviewer 产出 code-to-design 审查后 → **强制派发 16 个 RVR worker**（`dispatch_rvr_worker`，`rvr_id` 标识），每个以三方测试身份独立执行 | RVR 未启动 → 自动派发；全部到齐后 dispatch 汇总 Reviewer |
+| `coordinator.ts` RVR 完成分支 | `rvr_count >= 16` → 派发汇总 Reviewer；汇总后 `validateAirRvrReviewCoverage` + `rvr_completed` 双重校验 | coverage 不通过 → blocked |
+| `prompt.ts` scheduler system prompt | "[AirRvr 强制路由 (T-1.26)]" + RVR 阶段描述（Worker 15 项 → Reviewer → 16 三方测试 → 汇总） | Soft route |
+| `TickResult.rvr_id?: string` | scheduler 传回 RVR worker 结果时携带 `rvr_id` 字段，coordinator_tick 按此累积计数 | - |
+| `TaskGraphTask.rvr_completed` / `rvr_results` / `rvr_count` | 追踪 RVR 阶段状态与进度 | - |
 
 **不变量**：
-- **INV-RVR-1**: Worker `status="completed"` 必须包含 R-01~R-16 全部 16 项专项报告；任一缺失 → coordinator_tick 退回重做
-- **INV-RVR-2**: Reviewer 审查结论必须对 R-01~R-16 逐项给出明确判定（PASS/FAIL/通过/未通过/条件式/BLOCK/SKIP）；任一未评估 → coordinator_tick 退回重审
+- **INV-RVR-1**: Worker `status="completed"` 必须包含 R-01~R-15 全部 15 项专项报告（R-16 ASan/TSan/UBSan 仅 RVR 阶段执行，避免每个 Worker 卡半小时）；任一缺失 → coordinator_tick 退回重做
+- **INV-RVR-2**: Reviewer 完成首次审查后，coordinator_tick **强制派发 16 个三方测试子代理**（R-01~R-16），每个子代理独立上下文、独立执行、独立出报告；全部到齐后派发 Reviewer 做最终汇总审查
 - **INV-RVR-3**: coordinator_tick 是唯一允许把 `task.status` 设为 `"completed"` 的代码位置，因此是唯一允许放行通过 AirRvr Gate 的位置
+- **INV-RVR-4**: (v0.0.2 新增) Reviewer 首次审查完成后，`task.status` 进入 `pending_rvr` 状态；16 个 RVR worker 全部完成（`rvr_count >= 16`）后，dispatch 汇总 Reviewer；汇总 Review 通过（`rvr_completed = true`）并 `validateAirRvrReviewCoverage` 通过后才进入 `completed`
 
 ### Phase 2 — 引擎增强
 
@@ -2346,7 +2348,7 @@ CLAUDE.md 第 3.1 节"对 LLM 自觉性 0 信任"——因此 T-1.26 的 Python 
 | T-3.3 | AirSDB 多语言后端 | AirSDB 差距 |
 | T-3.4 | AirXDB kmsgrab + xvfb | AirXDB 差距 |
 | T-3.5 | AirDbg 步骤追踪 + 回滚 | AirDbg 差距 |
-| T-3.6 | AirRvr 16 项专项子代理派发机制（第三方测试身份、独立上下文派发、Abyssal Watch Engine 集成、ASan/TSan/UBSan/QTEST 强制） | P1-26, P1-27（深化，与 T-1.26 衔接） | 
+| T-3.6 | AirRvr 16 项专项子代理派发机制（第三方测试身份、独立上下文派发、Abyssal Watch Engine 集成、ASan/TSan/UBSan/QTEST 强制；**v0.0.2 已落地核心路由**：`coordinator.ts` RVR 阶段 `pending_rvr` → 16 `dispatch_rvr_worker` → `rvr_count >= 16` → 汇总 Reviewer；Python 层 AirRvrDispatcher 待补） | P1-26, P1-27（深化，与 T-1.26 衔接） | ⬜ 部分 | 
 | T-3.7 | AirSec 安全扫描 | 制品敏感数据泄露风险 |
 
 ### Phase 4 — 规模化
