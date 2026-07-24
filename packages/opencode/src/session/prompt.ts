@@ -1342,6 +1342,22 @@ export const layer = Layer.effect(
                 ].join(" "),
               )
             }
+            // T-1.26 / P1-26 + P1-27 / INV-RVR-1 + INV-RVR-2:
+            // 调度器 soft route (与 coordinator.ts 中的 L1 代码级强制相辅)
+            if (agent.name === "scheduler") {
+              system.push(
+                [
+                  "[AirRvr 强制路由 (T-1.26)]",
+                  "coordinator_tick 已硬注入两条 L1 代码级强制：",
+                  "(1) Worker status=\"completed\" 必须包含 R-01~R-16 全部 16 项专项报告 (智能指针 / RAII / 循环依赖 / 异常安全 / 对象生命周期竞态 / 架构引用 / Code-to-Design 逐行对照 / CMakeList / 测试覆盖 / 注释率≥60% / 关键流程日志 / Watchdog 心跳 / Debug 断言 / 禁止降级 / Abyssal Watch 静态交叉 / ASan+TSan+UBSan 动态 sanitizer)。",
+                  "coordinator_tick 缺失任何一项 → 退回 worker 重做；超 budget → blocked。",
+                  "(2) Reviewer 审查结论必须对 R-01~R-16 逐项给出明确判定词 (PASS/FAIL/通过/未通过/条件式/BLOCK/SKIP)。",
+                  "coordinator_tick 任一未评估 → 退回 reviewer 重审；超 airrvr_review_retry_budget → blocked。",
+                  "你禁止：绕过 AirRvr、让 worker 跳过任一专项、用「先这样」「以后再补」「先跑通」等降级措辞、接受未通过 reviewer 的任务。",
+                  "R-07/R-13 必须通过 task(subagent_type:\"architect\") 让 architect 参与。",
+                ].join(" "),
+              )
+            }
             const format = lastUser.format ?? { type: "text" as const }
             if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
             const result = yield* handle.process({

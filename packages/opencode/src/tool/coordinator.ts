@@ -235,12 +235,14 @@ interface TaskGraphTask {
     retry_budget?: number
     soft_timeout_ms?: number
     hard_timeout_ms?: number
+    airrvr_review_retry_budget?: number // T-1.26: reviewer AirRvr 重审预算（默认 2）
   }
   contracts?: {
     provides?: Array<{ module: string; kind: string; spec: string; stability: string }>
     requires?: Array<{ module: string; kind: string; spec: string; stability: string }>
   }
   retry_count?: number
+  airrvr_review_retry_count?: number // T-1.26: reviewer AirRvr 重审计数（独立于 worker retry_count）
 }
 
 interface TaskGraph {
@@ -256,6 +258,11 @@ interface TickResult {
   status: string
   has_cppcheck?: boolean
   output_text?: string
+  /** T-1.26 / P1-26: scheduler 可显式声明本轮提交的 R-XX 报告编号（与文本扫描互为补充）
+   *  - 提供此字段：coordinator_tick 会先用该声明核对编号是否齐全，再用文本扫描验证内容
+   *  - 不提供此字段：coordinator_tick 仅依赖 output_text 文本扫描
+   */
+  airrvr_reports?: string[]
 }
 
 function readTaskGraph(projectDir: string): TaskGraph | null {
@@ -387,6 +394,206 @@ function detectSurfaceEvidenceOnlyPass(text: string): boolean {
   // Check if the ONLY reasoning given is surface evidence
   const surfaceCount = SURFACE_EVIDENCE_PATTERNS.filter((p) => p.test(text)).length
   return hasPassConclusion && surfaceCount >= 2 && !hasDesignComparison
+}
+
+// ============================================================================
+// T-1.26 / P1-26 + P1-27: AirRvr 强制路由 — 16 项专项审查硬门禁
+// 设计文档: docs/airplanV2-Qwen3.7-Max设计.md §3.7.4
+//
+// 不变量（L1 代码级强制）:
+//   INV-RVR-1: Worker status="completed" 必须包含 R-01~R-16 全部 16 项专项报告
+//              任一缺失 → coordinator_tick 退回重做 / 超预算 blocked
+//   INV-RVR-2: Reviewer 审查结论必须对 R-01~R-16 逐项给出明确判定
+//              任一未评估 → coordinator_tick 退回重审 / 超预算 blocked
+//   INV-RVR-3: coordinator_tick 是唯一允许把 task.status 设为 "completed"
+//              的代码位置，因此是唯一允许通过门禁的位置
+// ============================================================================
+
+const AIRRVR_REQUIRED_REPORTS: readonly string[] = [
+  "R-01","R-02","R-03","R-04","R-05","R-06","R-07","R-08",
+  "R-09","R-10","R-11","R-12","R-13","R-14","R-15","R-16",
+] as const
+
+/**
+ * 检测 worker output_text 是否显式包含 R-01~R-16 全部 16 项专项报告。
+ * 判定规则：R-XX 后必须紧跟分隔符（空格 / 冒号 / 短横线 / CJK 字符）或位于行末，
+ * 不允许仅以 R-011 / R-012 等误匹配 R-01。
+ *
+ * 若 scheduler 显式提供了 airrvr_reports 字段，则两者取交集：声明的编号必须在文本中出现，
+ * 文本扫描的结果补全声明（允许声明字段漏，不允许声明字段无）。
+ */
+function validateAirRvrReports(
+  text: string,
+  declared: string[] = [],
+): {
+  present: string[]
+  missing: string[]
+  complete: boolean
+} {
+  const empty = !text || text.trim().length === 0
+  if (empty) {
+    return {
+      present: [],
+      missing: [...AIRRVR_REQUIRED_REPORTS],
+      complete: false,
+    }
+  }
+
+  const present: string[] = []
+  for (const r of AIRRVR_REQUIRED_REPORTS) {
+    // Word-boundary style matching: R-XX 必须独立出现
+    // 例如 "R-01" 后不能紧跟数字或字母（避免 R-011 误匹配 R-01）
+    const re = new RegExp(
+      `${r.replace("-", "\\-")}(?![A-Za-z0-9])`,
+      "i",
+    )
+    if (re.test(text)) present.push(r)
+  }
+
+  // 若 scheduler 显式声明了 airrvr_reports 但文本找不到，仍以文本扫描为准
+  // （防 LLM 在声明字段作弊写"已提交 R-01"但实际未产出）
+  if (declared.length > 0) {
+    const declaredSet = new Set(declared)
+    for (const r of AIRRVR_REQUIRED_REPORTS) {
+      if (declaredSet.has(r) && !present.includes(r)) {
+        // 声明但文本未找到 → 视为缺失（LLM 不可信）
+      }
+    }
+  }
+
+  const missing = AIRRVR_REQUIRED_REPORTS.filter((r) => !present.includes(r))
+  return { present: [...present], missing: [...missing], complete: missing.length === 0 }
+}
+
+/**
+ * 检测 reviewer output_text 是否对 R-01~R-16 每一项都给出了明确判定。
+ * 判定词必须出现在 R-XX 编号之后 400 字符的窗口内
+ * （避免 reviewer 把全部报告堆在一起只在文末给一个总 PASS）。
+ *
+ * 允许的判定词：
+ *   PASS | FAIL | BLOCK | SKIP | PASSED | FAILED | BLOCKED | SKIPPED
+ *   通过 | 未通过 | 阻断 | 跳过 | 条件式 | 已审查 | 未审查
+ */
+function validateAirRvrReviewCoverage(text: string): {
+  reviewed: string[]
+  unreviewed: string[]
+  allCovered: boolean
+} {
+  const empty = !text || text.trim().length === 0
+  if (empty) {
+    return {
+      reviewed: [],
+      unreviewed: [...AIRRVR_REQUIRED_REPORTS],
+      allCovered: false,
+    }
+  }
+
+  const verdictRe =
+    /(?:PASS(?:ED)?|FAIL(?:ED)?|BLOCK(?:ED)?|SKIP(?:PED)?|通过|未通过|阻断|跳过|条件式|已审查|未审查)/i
+
+  const reviewed: string[] = []
+  for (const r of AIRRVR_REQUIRED_REPORTS) {
+    // 找到所有 R-XX 的位置，每个位置后 400 字符窗口内必须有 verdict
+    const re = new RegExp(`${r.replace("-", "\\-")}(?![A-Za-z0-9])`, "gi")
+    let match: RegExpExecArray | null
+    let found = false
+    while ((match = re.exec(text)) !== null) {
+      const start = match.index
+      const end = Math.min(text.length, start + 400)
+      const window = text.slice(start, end)
+      if (verdictRe.test(window)) {
+        found = true
+        break
+      }
+    }
+    if (found) reviewed.push(r)
+  }
+
+  const unreviewed = AIRRVR_REQUIRED_REPORTS.filter((r) => !reviewed.includes(r))
+  return { reviewed: [...reviewed], unreviewed: [...unreviewed], allCovered: unreviewed.length === 0 }
+}
+
+function buildAirRvrWorkerRetryPrompt(task: TaskGraphTask, missing: string[]): string {
+  const retryCount = task.retry_count ?? 0
+  const budget = task.constraints?.retry_budget ?? 3
+  const remaining = Math.max(0, budget - retryCount)
+  const spec = [
+    ["R-01", "智能指针审计", "unique_ptr/shared_ptr/weak_ptr; 裸指针仅作为非持有观察指针"],
+    ["R-02", "RAII 包装审计", "文件/socket/mutex/线程/定时器/DB 连接必须 RAII 包装"],
+    ["R-03", "循环依赖审查", "头文件/CMake target/运行时组件 三层无环"],
+    ["R-04", "异常安全审查", "风险操作有异常处理，RAII 在异常路径释放资源"],
+    ["R-05", "对象生命周期竞态", "异步捕获指针 / 迭代器失效 / 跨线程对象构造析构"],
+    ["R-06", "架构引用合规", "依赖方向符合 C4 模块边界，禁止反向/跨层依赖"],
+    ["R-07", "Code-to-Design 逐行对照", "对照 plan.md 与 ADR 的每个设计要点（**Arc 必须参与**）"],
+    ["R-08", "CMakeList 配置", "cmake configure + build 全通过"],
+    ["R-09", "测试覆盖率与执行", "Catch2 + CTest 配置，覆盖功能与需求全部场景"],
+    ["R-10", "有效注释率 ≥ 60%", "仅计有效注释（意图/不变量/前后置条件/复杂度说明）"],
+    ["R-11", "关键流程日志", "spdlog 级别切换 debug/release，关键路径落点齐全"],
+    ["R-12", "Watchdog 心跳初始化", "仅 CORE 模块审查"],
+    ["R-13", "Debug 断言 + 仿真实环境测试", "Debug 模式断言 + 目标设备全功能测试（**Arc 必须参与**）"],
+    ["R-14", "禁止降级兜底", "禁止「先这样」「先跑通」「以后再改」「兜底方案」「hardcode first」等降级措辞"],
+    ["R-15", "Abyssal Watch Engine 静态交叉审查", "Infer + Cppcheck + Clang-Tidy + Semgrep，严格遵守 doctor→scan→verify"],
+    ["R-16", "动态 Sanitizer 审查", "ASan + TSan + UBSan，Qt 项目额外 QTEST"],
+  ]
+  const table = spec
+    .map(([id, name, point]) => `| ${id} | ${name} | ${point} |`)
+    .join("\n")
+  const missingList = missing.map((r) => `- ${r} ${spec.find((s) => s[0] === r)?.[1] ?? ""}`).join("\n")
+  return [
+    `## 退回重做（缺失 AirRvr 专项报告）: ${task.title}`,
+    `类型: worker（T-1.26 AirRvr 强制路由）`,
+    "",
+    `### 检测到的缺失专项 (${missing.length}/16)`,
+    missingList,
+    "",
+    "### CLAUDE.md 铁律（L1 代码级强制，不可绕过）",
+    "Worker 的 status=\"completed\" 必须包含 R-01~R-16 全部 16 项专项报告，",
+    "任一缺失 → coordinator_tick 退回重做；超预算 → blocked。",
+    "本约束不可被任何「先跑通」「以后再补」等降级措辞绕过。",
+    "",
+    "### 16 项专项审查清单（必须全部出现在你的输出中）",
+    "| ID | 名称 | 审查要点 |",
+    "|---|---|---|",
+    table,
+    "",
+    "### 强制步骤",
+    "1. 在输出中**明确写出每个 R-01~R-16 的专项审查结果**（每项都必须显式提到，包括判定和证据）",
+    "2. 执行 Abyssal Watch Engine 全流程（R-15）: `doctor --probe → scan → verify`，五项强制条件核对",
+    "3. 执行全套 Sanitizer（R-16）: ASan + TSan + UBSan，Qt 项目额外 QTEST",
+    "4. R-07 / R-13 必须派发 architect 子代理参与",
+    "5. 重新编译 + 测试 + cppcheck --enable=all",
+    "6. 输出中不得再出现任何降级措辞",
+    "",
+    `本次是第 ${retryCount}/${budget} 次重试，仍有 ${remaining} 次机会。`,
+  ].join("\n")
+}
+
+function buildAirRvrReviewerReReviewPrompt(task: TaskGraphTask, unreviewed: string[]): string {
+  const reviewRetry = task.airrvr_review_retry_count ?? 0
+  const reviewBudget = task.constraints?.airrvr_review_retry_budget ?? 2
+  const remaining = Math.max(0, reviewBudget - reviewRetry)
+  const unreviewedList = unreviewed.map((r) => `- ${r}`).join("\n")
+  return [
+    `## 重审（审查覆盖度不足）: ${task.title}`,
+    `类型: reviewer（T-1.26 AirRvr 强制路由）`,
+    "",
+    "### coordinator_tick 退回原因",
+    "上一次审查报告中部分 AirRvr 专项审查未给出明确判定。",
+    "",
+    `### 缺失明确判定的专项 (${unreviewed.length}/16)`,
+    unreviewedList,
+    "",
+    "### 强制要求（L1 代码级）",
+    "1. 审查报告中每项 R-01~R-16 都必须给出明确判定词：",
+    "   PASS / FAIL / BLOCK / SKIP / PASSED / FAILED / BLOCKED / SKIPPED / 通过 / 未通过 / 阻断 / 条件式",
+    "2. 判定词必须紧跟 R-XX 编号出现（400 字符窗口内），便于 coordinator_tick 解析",
+    "3. 禁止以「整体看起来 OK」「总体符合要求」「无严重问题」等模糊判定替代逐项明确判定",
+    "4. 仍需满足 Code-to-Design 逐行对照表要求",
+    "5. 仍需满足禁止 surface-evidence-only PASS 要求",
+    "6. 必须以第三方测试身份审查，禁止以 Worker / Arc 同源上下文自我确认",
+    "",
+    `本次是第 ${reviewRetry}/${reviewBudget} 次重审，仍有 ${remaining} 次机会。`,
+  ].join("\n")
 }
 
 function buildWorkerPrompt(task: TaskGraphTask): string {
@@ -622,6 +829,30 @@ export const CoordinatorTickTool = Tool.define(
                   })
                   continue
                 }
+                // T-1.26 / INV-RVR-1: Worker 必须包含 R-01~R-16 全部 16 项专项报告
+                // L1 代码级强制，缺失任何一个 → 退回重做 / 超预算 blocked
+                const airrvrTextCheck = validateAirRvrReports(
+                  result.output_text ?? "",
+                  result.airrvr_reports ?? [],
+                )
+                if (!airrvrTextCheck.complete) {
+                  const retryCount = task.retry_count ?? 0
+                  const budget = task.constraints?.retry_budget ?? 3
+                  if (retryCount < budget) {
+                    task.retry_count = retryCount + 1
+                    task.status = "pending"
+                    actions.push({
+                      action: "dispatch_worker",
+                      task_id: task.id,
+                      subagent_type: "worker",
+                      prompt: buildAirRvrWorkerRetryPrompt(task, airrvrTextCheck.missing),
+                      description: `退回重做（缺少 AirRvr 专项报告: ${airrvrTextCheck.missing.slice(0, 3).join(", ")}${airrvrTextCheck.missing.length > 3 ? ` (+${airrvrTextCheck.missing.length - 3})` : ""}）`,
+                    })
+                  } else {
+                    task.status = "blocked"
+                  }
+                  continue
+                }
                 task.status = "pending_review"
                 actions.push({
                   action: "dispatch_reviewer",
@@ -660,6 +891,29 @@ export const CoordinatorTickTool = Tool.define(
                       prompt: buildReReviewPrompt(task, !hasTable, surfaceOnly),
                       description: `重审（${!hasTable ? "缺少逐行对照表" : "仅凭表面证据判定"}）`,
                     })
+                    continue
+                  }
+                }
+                // T-1.26 / INV-RVR-2: Reviewer 必须对 R-01~R-16 每一项给出明确判定
+                // 任一未评估 → 退回重审 / 超预算 blocked (独立计数器 airrvr_review_retry_count)
+                if (result.output_text) {
+                  const coverage = validateAirRvrReviewCoverage(result.output_text)
+                  if (!coverage.allCovered) {
+                    const reviewRetry = task.airrvr_review_retry_count ?? 0
+                    const reviewBudget = task.constraints?.airrvr_review_retry_budget ?? 2
+                    if (reviewRetry < reviewBudget) {
+                      task.airrvr_review_retry_count = reviewRetry + 1
+                      task.status = "pending_review"
+                      actions.push({
+                        action: "dispatch_reviewer",
+                        task_id: task.id,
+                        subagent_type: "reviewer",
+                        prompt: buildAirRvrReviewerReReviewPrompt(task, coverage.unreviewed),
+                        description: `重审（${coverage.unreviewed.length} 项专项报告未明确判定: ${coverage.unreviewed.slice(0, 3).join(", ")}${coverage.unreviewed.length > 3 ? ` (+${coverage.unreviewed.length - 3})` : ""}）`,
+                      })
+                      continue
+                    }
+                    task.status = "blocked"
                     continue
                   }
                 }

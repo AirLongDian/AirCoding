@@ -33,6 +33,8 @@ V2 的核心命题：**V1 证明了制品驱动 + 上下文隔离 + 波次并行
 | P0-8 | AirDo 不调用专家插件（Dbg/XDB/NDB/SDB/Rvr） | AirDo SKILL.md / `worker.py` `finish_worker()` | 执行器遇到问题或验收时几乎不触发任何专家插件：不调 AirDbg 调试、不调 AirXDB 截图、不调 AirNDB 抓包、不调 AirSDB 静态分析、不调 AirRvr 审查，直接报 blocked 或 false-done | 自动路由为建议性而非强制，Worker 倾向于跳过所有专家插件直接返回 |
 | P0-9 | 安装器脚本路径错误 | 安装脚本 / 插件注册逻辑 | 安装后插件无法识别，AI 修复后可识别但脚本执行失败，路径不正确 | 安装器未正确解析插件脚本的绝对路径，注册的命令路径与实际文件位置不匹配 |
 | P0-10 | AirEng 偏离调度亲自写代码 | AirEng SKILL.md / 命令文件 | 调度引擎频繁偏离调度职责自己编写代码，破坏隔离架构。极端情况（子代理循环阻塞需接手合并）允许少量修改，但日常调度中不应发生 | SKILL.md 未明确区分"仅调度"与"极端接管"的边界，无工具限制约束 |
+| P0-11 | 更新源未隔离，持续误报 opencode 上游更新 | aircoding 内置 Installation service 检查逻辑 | aircoding fork 自 opencode，但更新检查一直轮询 opencode 的上游 release，持续弹出"有更新可用"的误报，与 aircoding 自身的 release 完全无关 | 分支 fork 时未重写 update channel、npm package scope 和 GitHub API 查询目标，`installation/update.ts` / `version.ts` 中仍指向原 opencode 源 |
+| P0-12 | 关键调度/设计/决策文档完全不回写 | AirEng / AirArc / AirDo / AirDbg 全流程 | 调度器不回写 task-graph.json / scheduler-state.json；AirArc 不更新 design.md、plan.md、需求文档；AirDo 不更新 ADR；AirDbg 不写 debug-log.md。导致所有下游组件基于过期制品继续执行，用户无法通过文档了解真实状态 | SKILL.md 和 `worker.py` / `eng_mode.py` / `arc_mode.py` / `debug_runtime.py` 均无文档回写的强制步骤；`merge_worker_result()` 只同步 todo.md 和 state.json，不覆盖 design 目录、ADR、debug-log |
 
 #### P1 — 限制可靠性与可维护性
 
@@ -63,6 +65,8 @@ V2 的核心命题：**V1 证明了制品驱动 + 上下文隔离 + 波次并行
 | P1-23 | Dispatch 指令歧义 | `commands/eng.md` | Eng 的 dispatch 步骤（spawn Worker）是意图描述而非可执行伪代码，Agent 每步都在猜：用什么工具？参数格式？task-text 从哪取？——猜错多一轮，猜不出来 Worker 不启动 | 指令未降到操作级。Arc 和 Eng 的约束非对称性是刻意的（Arc 永不写→硬阻断，Eng 保留极端接管→不硬阻断），P1-23 是纯指令层问题 |
 | P1-24 | AirArc 任务描述歧义导致弱模型破坏性执行 | AirArc `review.py` / SKILL.md | 任务粒度太粗、用词有歧义（如"清理"被弱模型理解为"删除全部"），Worker 严格按字面执行导致误删现有代码。真实案例：screenPlayer CMake 重构中 Worker 删除了整个 src/ | Arc 未针对弱模型优化任务描述，无"保留约束"机制，任务粒度未按操作类型拆分 |
 | P1-25 | Merge 后 TaskGraph 状态不同步 | `eng_mode.py:merge_worker_result()` | merge 更新 todo.md 和 state.json 但不动 task-graph.json。已完成任务的节点状态仍是 TODO/DISPATCHED，再次 dispatch 重复派发 | `merge_worker_result()` Phase 5/6 未同步 `task-graph.json` 节点 status 字段 |
+| P1-26 | 审查引擎过于单薄，无专项深入 | AirRvr / `review_runtime.py` / SKILL.md | AirRvr 单次单代理单次全量扫描，16 类专项审查（智能指针、RAII、循环依赖、异常安全、对象生命周期竞态、架构引用合规、Code-to-Design、CMakeList、测试覆盖率、有效注释率、日志落点、watchdog 心跳、Debug 断言、禁止降级兜底、Abyssal Watch 静态交叉、ASan/TSan/UBSan）共用一份 checklist 一次性扫过，每个维度平均审查深度不到 2 分钟，无法发现深层次的专项问题 | AirRvr 设计未引入"专项审查子代理"机制，无强制路由，16 项审查混在一个 Agent 一次上下文里完成，审查效果与单次人工 review 无本质差别，等同于形式化过场 |
+| P1-27 | 审查器以"自己"的身份审查而非"第三方测试"身份 | AirRvr SKILL.md / `review_runtime.py` | AirRvr 的审查视角与 Worker / Arc 同源，容易陷入"确认偏差"——看到符合预期的实现就放过，缺乏独立第三方测试视角的怀疑和破坏意图 | SKILL.md 未强制"第三方测试"角色设定，审查器未与 Worker / Arc 做上下文隔离，未要求审查器主动寻找反例 |
 
 #### P2 — 限制规模化
 
@@ -122,6 +126,10 @@ V2 的核心命题：**V1 证明了制品驱动 + 上下文隔离 + 波次并行
 | 界面设计缺乏专业 Skill 支撑 | UI 任务 | P1-20 |
 | ADR 变更后已完成任务不失效 | 架构变更时 | P1-21 |
 | AirArc 任务描述歧义导致弱模型破坏性执行 | 已造成实际损失 | P1-24 |
+| 更新源未隔离，持续误报 opencode 上游更新 | 每次启动/每次 6 小时检查 | P0-11 |
+| 关键调度/设计/决策文档不回写，调度图/状态/ADR/debug-log 全部滞后 | 持续累积（用户无法通过文档掌握真实状态） | P0-12 |
+| 审查引擎单次单代理走马观花，16 类专项审查无深入 | 每次审查（专项问题漏检率 100%） | P1-26 |
+| 审查器缺乏第三方测试视角，确认偏差严重 | 每次审查 | P1-27 |
 
 ---
 
@@ -1251,6 +1259,246 @@ def validate_task_description(task: TaskRecord) -> list[str]:
 
 Arc 生成任务后，对所有任务执行 `validate_task_description()` 自检。发现歧义词时自动拆分任务或补充保留约束，不将歧义任务传递给 Eng。
 
+#### 3.2.19 AirCoding Fork 更新通道隔离
+
+V1 / aircoding fork 早期沿用 opencode 上游的更新检查逻辑，导致启动时持续误报"有 opencode 上游更新可用"，与 aircoding 自身的 release 完全无关，严重干扰用户使用。V2 强制所有更新检查通道与 aircoding 自身绑定，与 opencode 上游完全隔离。
+
+**三层隔离机制**：
+
+```python
+# air_runtime/update_channel.py
+
+class UpdateChannelIsolation:
+    """Fork 版本必须完全隔离上游更新检查"""
+
+    # 上游（opencode）相关标识 — fork 中禁止出现
+    FORBIDDEN_UPSTREAM_PATTERNS = [
+        "github.com/anomalyco/opencode",     # 上游 GitHub repo
+        "npmjs.com/package/opencode-ai",      # 上游 npm scope
+        "api.github.com/repos/anomalyco",     # 上游 API
+        "opencode.ai/install",                # 上游 install script
+        "formulae.brew.sh/.../opencode",      # 上游 brew formula
+        "community.chocolatey.org/.../opencode",
+        "raw.githubusercontent.com/ScoopInstaller/.../opencode",
+    ]
+
+    # aircoding 自身的合法更新源 — 必须显式配置
+    REQUIRED_OWN_SOURCES = {
+        "github_repo": "aircoding-org/aircoding",        # 必须在 fork 时配置
+        "npm_package": "@aircoding/cli",                  # 必须在 fork 时配置
+        "brew_formula": "aircoding-org/tap/aircoding",
+        "choco_package": "aircoding",
+        "install_script": "aircoding.example/install",
+    }
+
+    def validate_update_target(self, url: str) -> UpdateTargetStatus:
+        """任何更新检查的 URL 必须通过该函数校验"""
+        for forbidden in self.FORBIDDEN_UPSTREAM_PATTERNS:
+            if forbidden in url:
+                raise UpdateIsolationViolation(
+                    f"Update check points to upstream: {url}. "
+                    f"aircoding must NOT check opencode upstream."
+                )
+        if not self._is_own_source(url):
+            raise UpdateTargetUnknown(
+                f"URL {url} is neither in FORBIDDEN nor in REQUIRED. "
+                "Must be explicitly classified."
+            )
+        return UpdateTargetStatus(isolated=True, target=url)
+```
+
+**修改点定位**（a irCoding fork 必须重写）：
+
+| 文件 | 修改内容 | 对应 P0-11 |
+|------|---------|-----------|
+| `packages/opencode/src/installation/index.ts` | `getBrewFormula()` / GitHub release API / `opencode.ai/install` 全部改为 aircoding 对应值 | 上游轮询 |
+| `packages/opencode/src/installation/index.ts` 第 138-142 行 | `anomalyco/tap/opencode` → aircoding 的 brew tap | brew 入口 |
+| `packages/opencode/src/installation/index.ts` 第 273-274 行 | `anomalyco/opencode` GitHub API → aircoding 的 GH repo | GitHub release |
+| `packages/core/src/installation/version.ts` | `InstallationChannel` 默认为 `aircoding` 而非 `latest`/`opencoderiver` | channel 标识 |
+| `packages/opencode/script/build.ts` 第 184 行 | `--user-agent=opencode/${Script.version}` → `aircoding/...` | UA 标识 |
+| `packages/opencode/package.json` 第 4 行 | `"name": "opencode"` → `"name": "aircoding"` | npm 包名 |
+
+**硬性约束（SKILL.md + 代码双重阻断）**：
+
+```python
+# air_runtime/update_channel.py
+
+def enforce_isolation_on_startup():
+    """启动时强制校验更新通道已隔离"""
+    for file_path, forbidden in [
+        ("packages/opencode/src/installation/index.ts", [
+            "anomalyco/opencode",
+            "anomalyco/tap/opencode",
+            "opencode.ai/install",
+        ]),
+        ("packages/core/src/installation/version.ts", [
+            '"opencode" as InstallationChannel',  # 硬编码 opencode channel
+        ]),
+    ]:
+        content = Path(file_path).read_text()
+        for pattern in forbidden:
+            if pattern in content:
+                raise UpdateIsolationViolation(
+                    f"START BLOCKED: {file_path} still contains upstream reference {pattern}. "
+                    "aircoding must not check opencode upstream releases."
+                )
+```
+
+**不变量**：aircoding 进程启动时，`enforce_isolation_on_startup()` 必须通过；任何指向 opencode 上游的网络请求在 aircoding 中视为**阻断级违规**，触发进程中止并输出明确错误信息。
+
+#### 3.2.20 文档强制回写机制
+
+V1 与 aircoding 早期实现普遍存在"执行完不更新文档"的现象：
+
+- **AirEng 不回写**：`task-graph.json` 节点状态 / `scheduler-state.json` 调度器实时状态 / 波次决策日志
+- **AirArc 不回写**：`design.md`、`plan.md`、需求文档、`todo.md`（仅首次生成，变更时不更新）
+- **AirDo Worker 不回写**：`ADR-*.md`（架构变更决策）
+- **AirDbg 不回写**：`debug-log.md`（调试过程证据、根因、修复方案）
+
+文档不回写的直接后果：所有下游组件（Arc 的后续规划、Eng 的后续调度、Rvr 的审查、用户通过文档查状态）都基于**过期的制品**继续执行。这是 P1-14（Arc 重规划后 Eng 无法衔接）、P1-21（ADR 变更无级联失效）、P1-25（Merge 后 TaskGraph 状态不同步）的共同根因之一。
+
+V2 引入**强制文档回写清单**，每个角色在执行完毕后必须将对应文档更新到最新状态，未更新则阻断返回。
+
+**回写清单矩阵**：
+
+| 角色 | 必须回写的文档 | 回写时机 | 阻断条件 |
+|------|--------------|---------|---------|
+| **AirEng** | `task-graph.json`（所有节点 status / in_degree / 时间戳） | 每次 `_select_ready_tasks`、每个 dispatch、每个 merge | 任何 status 字段与内存状态不一致 |
+| **AirEng** | `state/scheduler-state.json` | 每个波次开始、dispatch、worker 状态变化、merge | 文件 mtime > 当前状态时间 + 30s |
+| **AirEng** | `state/wave-{waveId}.json` | 每个波次开始 + 结束 + merge 完成 | 文件不存在或字段缺失 |
+| **AirEng** | `state/scheduler-decisions.jsonl` | 每个决策（dispatch 选择、blocked 升级、资源压力） | 任一重要决策未记录 |
+| **AirArc** | `docs/design.md` | 每次规划完成 + 任何架构变更 | 实际决策与文档不符 |
+| **AirArc** | `docs/plan.md` | 任务拆分、依赖关系、写集变更 | 任一计划变更未更新 |
+| **AirArc** | `docs/analysis/requirements.md` | 需求澄清、范围变更、新增需求 | 用户已确认的需求变更未反映 |
+| **AirArc** | `docs/adr/ADR-*.md` | 每个架构决策（新建或修改） | 决策发生但 ADR 未创建或 status 未更新为 accepted/superseded |
+| **AirArc** | `todo.md` | 规划完成后 + 增量重规划后 | 任一任务描述/依赖/Done When 与 task-graph 不一致 |
+| **AirDo Worker** | `docs/adr/ADR-*.md`（status: proposed → accepted，或新 ADR） | 任何实现偏离原 ADR 的变更 | 未创建新 ADR 或未更新受影响的 ADR |
+| **AirDo Worker** | 任务对应的 `state/worker/{taskId}.json` | 完成 / blocked / failed 时 | result 文件不完整 |
+| **AirDbg** | `docs/debug/{taskId}-{sessionId}.md` | 调试开始前、每次取证后、修复后、验证后 | 任一取证/修复步骤未记录 |
+| **AirDbg** | 受影响的代码文件的 commit message 中包含 debug-log 链接 | 每次修复提交 | commit message 未引用 debug-log 路径 |
+| **AirRvr** | `state/airrvr/reviews/{taskId}-{ts}.json` + `docs/reviews/{taskId}-review.md` | 每个审查完成 | 任一 16 项专项审查未落报告 |
+| **AirRvr** | 汇总的 `state/airrvr/review-summary.md` | 每个审查完成后追加 | verdict 为 fail 但 summary 未记录 |
+| **AirEng (合并阶段)** | `todo.md` + `state.json` + `task-graph.json`（同时更新） | `merge_worker_result()` 完成时 | 三个文件任一时间戳不一致 |
+
+**强制回写函数**：
+
+```python
+# air_runtime/doc_sync.py 改造
+
+class MandatoryWriteBack:
+    """强制文档回写清单的运行时执行"""
+
+    REQUIRED_DOCS = {
+        "airarc": [
+            "docs/design.md",
+            "docs/plan.md",
+            "docs/analysis/requirements.md",
+            "docs/adr/ADR-*.md",
+            "todo.md",
+        ],
+        "aireng": [
+            "state/airarc/reviews/task-graph.json",
+            "state/aireng/scheduler-state.json",
+            "state/aireng/dispatch/wave-*.json",
+            "state/aireng/scheduler-decisions.jsonl",
+        ],
+        "airdo_worker": [
+            "docs/adr/ADR-*.md",  # 变更时
+            "state/worker/{taskId}.json",
+        ],
+        "airdbg": [
+            "docs/debug/{taskId}-{sessionId}.md",
+        ],
+        "airrvr": [
+            "state/airrvr/reviews/{taskId}-{ts}.json",
+            "state/airrvr/review-summary.md",
+            "docs/reviews/{taskId}-review.md",
+        ],
+    }
+
+    def enforce_role_writeback(self, role: str, context: dict) -> WriteBackReport:
+        """执行完毕后强制校验所有必需文档都已更新到最新状态"""
+        missing = []
+        stale = []
+        for doc_template in self.REQUIRED_DOCS[role]:
+            doc_path = self._resolve_template(doc_template, context)
+            if not doc_path.exists():
+                missing.append(doc_template)
+                continue
+            if not self._is_fresh(doc_path, context["expected_mtime"]):
+                stale.append(doc_template)
+
+        if missing or stale:
+            return WriteBackReport(
+                passed=False,
+                missing=missing,
+                stale=stale,
+                blocker_message=(
+                    f"{role} must update the following documents before returning:\n"
+                    f"  missing: {missing}\n"
+                    f"  stale: {stale}"
+                )
+            )
+        return WriteBackReport(passed=True, missing=[], stale=[])
+
+    def _is_fresh(self, doc_path: Path, expected_mtime: datetime) -> bool:
+        """检查文档 mtime >= 任务开始时间"""
+        doc_mtime = datetime.fromtimestamp(doc_path.stat().st_mtime)
+        return doc_mtime >= expected_mtime - timedelta(seconds=30)
+```
+
+**集成到 Worker 生命周期**：
+
+```python
+# worker.py finalize 流程扩展
+
+def finalize_worker(result: WorkerResult, brief: dict) -> FinalizeReport:
+    # 1. 原有的 result 校验
+    validate_result(result, brief)
+
+    # 2. 强制执行文档回写（新增）
+    writeback = MandatoryWriteBack()
+    report = writeback.enforce_role_writeback("airdo_worker", {
+        "taskId": brief["taskId"],
+        "expected_mtime": brief["startedAt"],
+    })
+    if not report.passed:
+        return FinalizeReport(
+            status="blocked",
+            reason="mandatory-writeback-failed",
+            details=report.blocker_message,
+        )
+
+    # 3. 原有的 result → AirPlan 归档
+    return _do_finalize(result, brief)
+```
+
+**集成到 Eng 调度循环**：
+
+```python
+# eng_mode.py 调度循环
+
+def dispatch_and_track(project_root, wave):
+    # ... 原有 dispatch ...
+
+    # dispatch 后立即回写所有必需文档
+    wb = MandatoryWriteBack()
+    report = wb.enforce_role_writeback("aireng", {
+        "waveId": wave.wave_id,
+        "expected_mtime": wave.started_at,
+    })
+    if not report.passed:
+        raise EngineIntegrityBreach(
+            "Engine state out of sync with disk: " + report.blocker_message
+        )
+```
+
+**不变量**：
+
+- **INV-WB-1**：任一角色执行任何状态变更操作后，对应的文档必须在 30 秒内落盘，否则该角色的返回值为 `blocked`。
+- **INV-WB-2**：`merge_worker_result()` 必须原子地同时更新 `todo.md`、`state.json`、`task-graph.json`，三者时间戳差不得超过 1 秒。
+- **INV-WB-3**：AirDbg 的 `debug-log.md` 必须在每次取证/修复/验证操作后立即追加，不允许"全部完成后一次性写出"。
+
 ### 3.3 AirContext V2 改进
 
 #### 3.3.1 压缩质量校验
@@ -1598,121 +1846,351 @@ class XvfbCapture(CaptureBackend):
   - 发现敏感数据时阻止合并并通知用户
 ```
 
-#### 3.7.4 AirRvr — 需求审查器插件
+#### 3.7.4 AirRvr — 需求审查器插件（16 项专项子代理派发机制）
 
+> 本节完全重写以解决 P1-26（审查引擎单薄）与 P1-27（缺乏第三方测试视角）。
+
+**职责**：在各角色（AirDo / AirArc / AirDbg）完成其自身的审查、规划、调试之后，作为独立第三方测试身份的审查器，针对已完成任务再额外派发 16 项专项强化审查子代理，每项子代理独立上下文、独立执行、独立出报告，汇总为最终审查结论。
+
+**核心问题**：V1 / V2 早期 AirRvr 的审查逻辑是单 Agent + 单上下文 + 单次全量扫描，将 16 类专项审查混入同一个 checklist 中走马观花。问题包括：
+- 每个专项（智能指针、RAII、循环依赖、异常安全、竞态、架构合规、Code-to-Design、CMakeList、测试覆盖、注释率、日志、watchdog、Debug 断言、禁止降级、Abyssal Watch、ASan/TSan/UBSan）平均审查深度 < 2 分钟，无法发现深层专项问题
+- 审查器以"自己"的身份审查，与 Worker / Arc 同源上下文，陷入确认偏差
+- 未以"第三方测试"独立身份发起怀疑-破坏-证伪式审查
+- Abyssal Watch Engine（Infer + Cppcheck + Clang-Tidy + Semgrep）未与审查流程集成
+- ASan / TSan / UBSan / QTEST 动态审查未成为强制环节
+
+**设计原则**：
+1. **第三方测试身份**：审查器必须以独立于 Worker / Arc / Dbg 的第三方测试身份执行
+2. **专项子代理派发**：每项审查任务作为独立子代理派发，独占上下文，独立报告
+3. **强制路由**：Worker / Arc / Dbg 完成自己那部分后，必须额外派发 16 个子代理
+4. **全通过才放行**：16 项中任一 fail 阻断 merge / release
+5. **静态 + 动态双轨**：静态审查（Abyssal Watch Engine）+ 动态审查（Sanitizers）
+
+**审查模式**：
+- **逐任务审查**：单个 Worker 完成后立即派发 16 项专项
+- **波次审查**：一个波次所有 Worker 完成后批量派发（避免重复）
+- **里程碑审查**：项目阶段结束时全量审查
+   - AirPlan/docs/analysis/requirements.md
+   - AirPlan/plan.md
+   - AirPlan/todo.md (含当前任务的 Task/Files/Done When/Validation)
+   - 用户的原始指令 (如果有记录)
+
+**16 项专项审查任务清单**（每项 = 独立子代理）：
+
+| ID | 专项名称 | 适用任务类型 | 是否需 Arc 参与 | 外部工具依赖 | 阻断级别 |
+|---|---|---|---|---|---|
+| R-01 | **智能指针审计**：所有我们持有所有权的指针必须使用智能指针 | cpp | 否 | 无 | block |
+| R-02 | **RAII 包装审计**：所有自行分配内存必须使用 RAII 包装 | cpp | 否 | 无 | block |
+| R-03 | **循环依赖审查**：不允许出现循环依赖（头文件/CMake target/运行时） | cpp, cmake, architecture | 是 | 无 | block |
+| R-04 | **异常安全审查**：所有风险操作是否异常处理、是否异常安全 | cpp | 否 | 无 | block |
+| R-05 | **对象生命周期竞态审查**：审查所有对象生命周期是否存在竞态 | cpp | 否 | 无 | block |
+| R-06 | **架构引用合规审查**：是否正确引用和使用架构中其它模块 | cpp, cmake, architecture | 是 | 无 | block |
+| R-07 | **Code-to-Design 逐行对照**：**不惜成本的严格逐行对照每一个函数的逻辑实现** 是否符合原始需求与设计文档，与设计偏差一律视为阻断项 | all | 是（强制） | 无 | block |
+| R-08 | **CMakeList 配置审查**：目标和测试能否全部正常编译 | cmake, cpp | 否 | `cmake-build` | block |
+| R-09 | **测试覆盖率与执行**：已有测试是否完善、能否完全覆盖功能与需求，配置到 Catch2 / CTest 后执行 | cpp, cmake | 否 | `catch2 + ctest` | block |
+| R-10 | **有效注释率审计**：有效注释率必须 > 60%（仅计算有效注释） | cpp | 否 | `comment-analyzer` | block |
+| R-11 | **关键流程日志落点审查**：各关键流程与节点是否打印日志，日志输出配置是否正确且符合设计 | cpp, architecture | 否 | 无 | block |
+| R-12 | **Watchdog 心跳初始化审查**：仅 CORE 模块适用 | core-module | 否 | 无 | block |
+| R-13 | **Debug 断言 + 仿真实环境测试**：Debug 模式增加断言，在目标设备进行全功能仿真实环境测试，确保每一步状态变化符合设计预期 | cpp, core-module | 是（强制） | `target-device-simulator` | block |
+| R-14 | **禁止降级兜底审查**：扫描"先这样实现""先跑通再说""以后再改"等降级痕迹 | all | 否 | `degradation-scan` | block |
+| R-15 | **Abyssal Watch Engine 静态交叉审查**：必须调用深渊观察引擎执行 Infer + Cppcheck + Clang-Tidy + Semgrep 交叉静态审查，无条件可用则降级为手动四工具交叉审查但不允许仅单工具通过 | cpp | 否 | `abyssal-watch` | block |
+| R-16 | **动态 Sanitizer 审查**：必须执行 ASan / TSan / UBSan 审查；Qt 项目额外执行 QTEST | cpp | 否 | `asan + tsan + ubsan (+ qtest)` | block |
+
+**AirRvrDispatcher 调度器**：
+
+```python
+# air_runtime/review_runtime.py 新增 —— AirRvr V2
+
+class AirRvrDispatcher:
+    """AirRvr 16 项专项子代理派发调度器
+
+    各角色（AirDo Worker / AirArc / AirDbg）完成各自的审查/规划/调试后，
+    必须调用本调度器额外派发 16 项专项子代理。每项子代理独立上下文、独立执行。
+    """
+
+    IDENTITY = ReviewIdentity.THIRD_PARTY_TESTER  # 强制第三方测试身份
+
+    def __init__(self, engine: Engine, project_root: Path):
+        self.engine = engine
+        self.project_root = project_root
+
+    def dispatch_specialized_reviews(
+        self, task_id: str, task_type: str, worker_result: WorkerResult
+    ) -> DispatchReport:
+        """派发 16 项专项审查子代理（适用项）"""
+        dispatched, skipped = [], []
+        for review in SPECIALIZED_REVIEWS:
+            if not self._is_applicable(review, task_type):
+                skipped.append(review.id)
+                continue
+            sub_task = TaskSpec(
+                id=f"{task_id}__rvr-{review.id}",
+                parent_task_id=task_id,
+                kind="specialized-review",
+                review_id=review.id,
+                review_name=review.name,
+                review_description=review.description,
+                requires_arc=review.requires_arc,
+                requires_external_tool=review.requires_external_tool,
+                identity=self.IDENTITY,     # 第三方测试身份
+                fork_context=False,         # 独立上下文
+            )
+            self.engine.dispatch_sub_agent(sub_task)
+            dispatched.append(review.id)
+
+        return DispatchReport(task_id=task_id, dispatched=dispatched, skipped=skipped)
+
+    def collect_verdicts(
+        self, task_id: str, timeout_seconds: int = 3600
+    ) -> FinalReviewVerdict:
+        """收集 16 项专项审查的结果，汇总为最终结论"""
+        results = []
+        deadline = now() + timedelta(seconds=timeout_seconds)
+        for review in SPECIALIZED_REVIEWS:
+            sub_task_id = f"{task_id}__rvr-{review.id}"
+            try:
+                report = self.engine.get_sub_agent_report(sub_task_id, deadline=deadline)
+                results.append(report)
+            except SubAgentTimeout:
+                # 任一专项超时视为 FAIL（fail-closed 原则）
+                results.append(ReviewReport(
+                    review_id=review.id,
+                    verdict=ReviewVerdict.FAIL,
+                    reason="specialized-review-timeout",
+                ))
+
+        fails = [r for r in results if r.verdict == ReviewVerdict.FAIL]
+        conditionals = [r for r in results if r.verdict == ReviewVerdict.CONDITIONAL_PASS]
+
+        if fails:
+            final_verdict = ReviewVerdict.FAIL
+        elif conditionals:
+            final_verdict = ReviewVerdict.CONDITIONAL_PASS
+        else:
+            final_verdict = ReviewVerdict.PASS
+
+        return FinalReviewVerdict(
+            task_id=task_id, verdict=final_verdict,
+            total=len(results), passed=len(results) - len(fails) - len(conditionals),
+            failed=len(fails), conditional=len(conditionals),
+            failed_items=[f.review_id for f in fails],
+            conditional_items=[c.review_id for c in conditionals],
+        )
 ```
-职责: 基于原始需求文档对已完成任务进行独立审查，验证交付物与需求的一致性
 
-核心问题:
-  V1 中任务"完成"的判定仅依赖 Worker 自报 + AirEng 结构验证。
-  没有任何组件将交付物与原始需求 (requirements.md / plan.md / 用户指令) 进行
-  独立比对。Worker 可能:
-  - 实现了代码但偏离了需求意图
-  - 满足了 Done When 字面条件但遗漏了隐含需求
-  - 验证通过但解决的是错误的问题
+**AirRvr SKILL.md V2 强制指令**：
 
-工作流:
-  1. 加载原始需求上下文:
-     - AirPlan/docs/analysis/requirements.md
-     - AirPlan/plan.md
-     - AirPlan/todo.md (含当前任务的 Task/Files/Done When/Validation)
-     - 用户的原始指令 (如果有记录)
+```markdown
+## 身份设定（不可违反）
+你是**独立第三方测试员**。你不是本次任务的 Worker、Arc、Dbg。
+你和被审查代码没有任何利害关系。
+你的工作方法是**怀疑、破坏、证伪**——主动寻找反例而非确认符合。
 
-  2. 加载交付物:
-     - Worker result.json (summary, filesChanged, validations)
-     - 变更文件的 diff (git diff 或文件内容)
-     - 验证证据 (测试输出、截图、静态分析报告)
+## 强制审查流程（每任务必走）
+当 Worker / Arc / Dbg 完成其自身的审查/规划/调试后，你**必须**通过
+`AirRvrDispatcher.dispatch_specialized_reviews()` 额外派发 16 项专项子代理，
+每项一个独立子代理，独占上下文、独立报告。
 
-  3. 多维度审查:
-     - 需求覆盖度: 原始需求中的每个要求点是否被交付物覆盖
-     - 意图一致性: 交付物是否解决了需求想解决的真正问题
-     - 边界完整性: 是否遗漏了需求的隐含边界条件
-     - 回归风险: 变更是否破坏了需求的已有功能
-     - 代码质量: 复杂度、可读性、重复率、异常处理完备性
-     - 生命周期健壮性: 资源释放、连接管理、超时/重试/降级策略
-     - 运行时稳定性: 内存泄漏风险、竞态条件、崩溃路径、错误传播
-     - 用户影响评估: 变更是否引入用户可感知的崩溃或卡顿风险
-     - **Code-to-Design 一致性（强制）**: 代码实现是否严格遵循设计文档，逐行对照
-
-  4. 产出审查报告:
-     AirPlan/state/airrvr/reviews/{task_id}-{ts}.json
-     AirPlan/docs/reviews/{task_id}-review.md
-
-     报告结构:
-     {
-       "taskId": "T-001",
-       "verdict": "pass | conditional-pass | fail",
-       "coverage": [
-         {"requirement": "...", "status": "covered | partial | missing",
-          "evidence": "具体文件或代码位置"}
-       ],
-       "intentAlignment": "aligned | divergent",
-       "divergenceNotes": "...",
-       "regressionRisk": "none | low | medium | high",
-       "regressionDetails": "...",
-       "codeQuality": {
-         "complexity": "low | medium | high",
-         "readability": "good | acceptable | poor",
-         "duplication": "none | low | high",
-         "errorHandling": "complete | partial | missing"
-       },
-       "lifecycleHealth": {
-         "resourceLeak": "none | suspected | confirmed",
-         "connectionManagement": "proper | improper | missing",
-         "timeoutStrategy": "present | absent",
-         "retryStrategy": "present | absent"
-       },
-       "runtimeStability": {
-         "crashRisk": "none | low | medium | high",
-         "raceCondition": "none | suspected | confirmed",
-         "memoryLeak": "none | suspected | confirmed",
-         "userImpact": "none | minor | major"
-       },
-       "codeToDesignTable": [
-         {"designRef": "ADR-0023: JWT认证", "codeLocation": "auth/jwt.py:L45-78", "status": "aligned | divergent | missing", "notes": "实现了ADR规定的RS256算法"},
-         {"designRef": "C4: 模块边界", "codeLocation": "services/auth_service.py:L12", "status": "aligned", "notes": "依赖方向符合架构约束"},
-         {"designRef": "需求: 登录失败锁定", "codeLocation": "auth/login.py:L89-102", "status": "divergent", "notes": "实现了5次失败锁定，需求要求3次"}
-       ],
-       "recommendations": ["..."]
-     }
-
-  5. 与 AirEng 集成:
-     - AirEng merge 前可选调用 AirRvr 审查
-     - verdict=fail 时阻止合并，要求 Worker 修订
-     - verdict=conditional-pass 时允许合并但记录遗留项
-     - verdict=pass 时正常合并
-
-审查模式:
-  - 逐任务审查: 单个任务完成后立即审查
-  - 波次审查: 一个波次所有任务完成后批量审查
-  - 里程碑审查: 项目阶段结束时全量审查 (比对 requirements.md 全文)
-
-  **Code-to-Design 逐行对照审查**（每次审查必含）:
-    对每个任务的交付代码，与对应的设计文档进行逐行级别的对照：
-    - 实现 ↔ 需求: 代码是否覆盖了需求中的每个功能点
-    - 实现 ↔ ADR: 代码是否遵循了架构决策记录中的约束
-    - 实现 ↔ C4: 代码是否符合模块边界和职责划分
-    - 实现 ↔ Done When: 代码是否满足了完成条件的字面要求
-    - 偏离标记: 发现实现偏离设计时，标记具体行号和偏离类型
-
-    报告结构扩展:
-    {
-      "codeToDesign": [
-        {"designItem": "ADR-0003: 使用 JWT 认证",
-         "implementationStatus": "aligned | divergent | missing",
-         "codeLocation": "src/auth/token.py:45-78",
-         "designLocation": "docs/architecture/adr/ADR-0003-jwt.md",
-         "divergenceDetail": "实现使用了 HS256 而非 ADR 规定的 RS256"}
-      ]
-    }
-
-制品:
-  AirPlan/state/airrvr/
-    reviews/{task_id}-{ts}.json    # 结构化审查报告
-    review-summary.md              # 累积审查摘要
-  AirPlan/docs/reviews/
-    {task_id}-review.md            # 人类可读审查报告
+## 禁止行为
+- 禁止把 16 项合并为一个 Agent 单次扫描完成
+- 禁止用"测试通过"/"typecheck 通过"/"build 通过"作为通过依据
+- 禁止以 Worker / Arc / Dbg 的身份执行审查
+- 禁止复用任何 Worker 阶段的审查结论
 ```
+
+**集成到 Worker 生命周期（强制路由）**：
+
+```python
+# finish_worker() 追加（不可跳过）
+if result.status == "done":
+    decisions.append(RoutingDecision(
+        target="airrvr-specialized-dispatch",
+        forced=True,
+        reason=(
+            "completed task requires 16 specialized third-party review sub-agents "
+            "(P1-26 fix: 智能指针、RAII、循环依赖、异常安全、竞态、架构合规、"
+            "Code-to-Design、CMakeList、测试覆盖、注释率、日志、watchdog、"
+            "Debug 断言、禁止降级、Abyssal Watch、ASan/TSan/UBSan)"
+        ),
+        dispatch_count=16,
+        identity=ReviewIdentity.THIRD_PARTY_TESTER,
+    ))
+```
+
+**Abyssal Watch Engine 集成规范（R-15 专项）**：
+
+```python
+# air_runtime/review_runtime.py —— Abyssal Watch Engine 调用封装（严格遵守接口契约 v1.0）
+
+class AbyssalWatchClient:
+    """严格遵循 Abyssal-Watch-Engine v1.0 接口契约
+
+    调用流程强制：doctor --probe → scan → verify
+    核对条件强制：exit_code=0 AND stdout JSON exit_code=0 AND state=PASSED
+                AND release_eligible=true AND finding_count=0 AND gap_count=0
+    """
+
+    REQUIRED_STEPS = ["doctor", "scan", "verify"]
+
+    def run_full_review(
+        self, project: Path, compdb: Path | None = None, profile: str | None = None
+    ) -> AbyssalVerdict:
+        # Step 1: doctor --probe
+        rc, doctor = self._call("doctor", "--probe")
+        if rc != 0:
+            return AbyssalVerdict(passed=False, blocked_step="doctor",
+                reason=f"doctor --probe failed: rc={rc}", details=doctor)
+
+        # Step 2: scan
+        scan_args = ["--project", str(project)]
+        if compdb: scan_args.extend(["--compdb", str(compdb)])
+        if profile: scan_args.extend(["--profile", profile])
+        scan_args.extend(["--out", str(project / "abyssal-output")])
+        rc, scan = self._call("scan", *scan_args)
+        if rc != 0:
+            return AbyssalVerdict(passed=False, blocked_step="scan", reason=f"scan blocked: rc={rc}")
+
+        # Step 3: verify
+        rc, verify = self._call("verify", "--report", scan["report_path"])
+        if rc != 0:
+            return AbyssalVerdict(passed=False, blocked_step="verify",
+                reason=f"report verification failed: rc={rc}")
+
+        # 五项强制条件核对
+        passed = (
+            rc == 0
+            and scan.get("exit_code") == 0
+            and scan.get("state") == "PASSED"
+            and scan.get("release_eligible") is True
+            and scan.get("finding_count") == 0
+            and scan.get("gap_count") == 0
+        )
+        if not passed:
+            return AbyssalVerdict(passed=False, blocked_step="final-check",
+                reason="one or more required conditions not met",
+                details={"scan": scan, "verify": verify})
+
+        return AbyssalVerdict(passed=True, blocked_step=None,
+            report_path=scan["report_path"], report_sha256=scan["report_sha256"])
+
+    def _call(self, command, *args) -> tuple[int, dict]:
+        """调用 abyssal-watch 公开 CLI，返回 (exit_code, parsed_json)"""
+        completed = subprocess.run(
+            ["abyssal-watch.exe", command, *args, "--json"],
+            text=True, encoding="utf-8", capture_output=True, check=False, timeout=3600,
+        )
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Abyssal Watch invalid JSON for {command}: {exc}") from exc
+        if completed.returncode != payload.get("exit_code"):
+            raise RuntimeError(
+                f"Exit code disagreement: process={completed.returncode}, "
+                f"json={payload.get('exit_code')} for {command}")
+        return completed.returncode, payload
+```
+
+Agent 执行 R-15 专项时**禁止以下行为**（摘自 Abyssal Watch 接口契约）：
+- 禁止自动执行 `seal-runtime` 修复哈希不一致
+- 禁止修改 `report.json` 后重新签封
+- 禁止删除、降级、隐藏或自动关闭 finding
+- 禁止把 `FALSE_POSITIVE` / `WONT_FIX` / `UNREPRODUCIBLE` 当成通过
+- 禁止跳过 doctor 或 verify
+- 禁止使用上一次报告代替本次执行
+- 禁止在 appliance 不可用时改用 mock
+- 禁止直接调用某一分析器（只允许通过 `abyssal-watch` 公开 CLI）
+- 禁止解析人类日志中的 PASS 字样作出结论
+- 禁止在扫描失败后继续执行发布、部署或合并
+
+**动态 Sanitizer 集成规范（R-16 专项）**：
+
+```python
+# air_runtime/review_runtime.py —— Sanitizer 调用封装
+
+class SanitizerRunner:
+    """ASan / TSan / UBSan + QTEST 动态审查"""
+
+    REQUIRED = ["asan", "tsan", "ubsan"]
+
+    def run_sanitizer_suite(
+        self, project: Path, build_dir: Path, is_qt_project: bool = False
+    ) -> SanitizerVerdict:
+        """顺序运行全套 sanitizer，任一失败即阻断"""
+        results = {}
+        for sanitizer in self.REQUIRED:
+            results[sanitizer] = self._run_single(project, build_dir, sanitizer)
+            if not results[sanitizer].passed:
+                return SanitizerVerdict(passed=False, failed_sanitizer=sanitizer)
+
+        if is_qt_project:
+            results["qtest"] = self._run_single(project, build_dir, "qtest")
+            if not results["qtest"].passed:
+                return SanitizerVerdict(passed=False, failed_sanitizer="qtest")
+
+        return SanitizerVerdict(passed=True, failed_sanitizer=None)
+
+    def _run_single(self, project, build_dir, sanitize: str) -> SingleSanitizerResult:
+        flags = {
+            "asan":  "-fsanitize=address -fno-omit-frame-pointer",
+            "tsan":  "-fsanitize=thread",
+            "ubsan": "-fsanitize=undefined -fno-omit-frame-pointer",
+            "qtest": "-DWITH_QTEST=ON",
+        }[sanitize]
+        # 强制 cmake rebuild 注入 sanitizer flags
+        configure_cmd = ["cmake", "-S", str(project), "-B", str(build_dir),
+                        f"-DCMAKE_CXX_FLAGS={flags}"]
+        rc, _, stderr = self._run(configure_cmd)
+        if rc != 0: return SingleSanitizerResult(passed=False, step="configure")
+        rc, _, stderr = self._run(["cmake", "--build", str(build_dir), "--parallel"])
+        if rc != 0: return SingleSanitizerResult(passed=False, step="build")
+        rc, stdout, stderr = self._run(
+            ["ctest", "--test-dir", str(build_dir), "--output-on-failure", "--timeout", "600"])
+        # 主动扫描 sanitizer 输出关键词
+        if any(marker in (stdout + stderr) for marker in [
+            "SUMMARY: AddressSanitizer", "SUMMARY: ThreadSanitizer",
+            "SUMMARY: UndefinedBehaviorSanitizer", "runtime error:",
+            "ERROR: LeakSanitizer"]):
+            return SingleSanitizerResult(passed=False, step="test",
+                reason=f"{sanitize} reported issues")
+        return SingleSanitizerResult(passed=True, step="test")
+```
+
+**最终报告结构（聚合 16 项 + Abyssal + Sanitizer）**：
+
+```json
+{
+  "taskId": "T-028",
+  "reviewIdentity": "third-party-tester",
+  "finalVerdict": "pass | conditional-pass | fail",
+  "summary": { "total": 16, "passed": 14, "failed": 0, "conditional": 1, "skipped": 1 },
+  "specializedReviews": [
+    { "id": "R-01", "name": "智能指针审计", "verdict": "pass", "findings": [] },
+    { "id": "R-07", "name": "Code-to-Design 逐行对照", "verdict": "conditional-pass",
+      "arcParticipated": true,
+      "findings": [{ "designRef": "ADR-0042: 心跳周期 500ms",
+        "codeLocation": "src/core/heartbeat.cpp:89", "status": "divergent",
+        "divergenceDetail": "实现为 1000ms，需 ADR 修订或代码修正" }] },
+    { "id": "R-15", "name": "Abyssal Watch Engine 静态交叉审查", "verdict": "pass",
+      "abyssalReport": { "state": "PASSED", "release_eligible": true,
+        "finding_count": 0, "gap_count": 0, "report_sha256": "...", "tool_count": 4 } },
+    { "id": "R-16", "name": "动态 Sanitizer 审查", "verdict": "pass",
+      "sanitizerResults": { "asan": {"passed": true}, "tsan": {"passed": true}, "ubsan": {"passed": true} } }
+  ]
+}
+```
+
+与 AirEng 集成规则（强制阻断）：
+- `verdict=fail` 时阻止合并，要求 Worker 修订对应项
+- `verdict=conditional-pass` 时允许合并但记录遗留项并要求修复承诺
+- `verdict=pass` 且 16 项全部 PASS 时才允许合并
+- 任一 `R-15` (Abyssal Watch) 或 `R-16` (Sanitizers) 失败即视为整体 fail
+
+制品：
+- `AirPlan/state/airrvr/reviews/{task_id}-{ts}.json` — 16 项聚合报告
+- `AirPlan/state/airrvr/reviews/{task_id}__rvr-R-XX-{ts}.json` — 单项子代理报告
+- `AirPlan/state/airrvr/review-summary.md` — 累积审查摘要
+- `AirPlan/docs/reviews/{task_id}-review.md` — 人类可读审查报告
+- `AirPlan/abyssal-output/` — Abyssal Watch Engine 输出（保留完整证据）
 
 #### 3.7.4 事件索引层
 
@@ -1813,8 +2291,31 @@ air_runtime/
 | T-1.21 | AirArc 任务描述弱模型优化（歧义词检测 + 保留约束 + 自检） | P1-24 | 1d |
 | T-1.22 | Dispatch → Worker 桥接（spawn_workers + 指令操作化 + 工具白名单对齐） | P1-22, P1-23 | 1d |
 | T-1.23 | Merge → TaskGraph 状态同步（merge 后更新 task-graph.json 节点 status） | P1-25 | 0.5d |
+| T-1.24 | AirCoding Fork 更新通道隔离（重写 update channel、npm scope、GitHub API 目标；**已落地至 `air_runtime/update_channel.py` + 启动探针**） | P0-11 | 1d ✅ |
+| T-1.25 | 强制文档回写机制（`MandatoryWriteBack` + 各角色角色清单 + 合并阶段原子同步；**已落地至 `air_runtime/doc_sync.py` + INV-WB-1/2/3**） | P0-12 | 2d ✅ |
+| T-1.26 | AirRvr 升级为 16 项专项子代理派发机制（含 Abyssal Watch、ASan/TSan/UBSan 集成；**双轨落地**：① L1 代码级强制 = `coordinator.ts` 中 `validateAirRvrReports` + `validateAirRvrReviewCoverage` 两条纯校验函数 + `TickResult.airrvr_reports?:string[]` 字段 + `TaskGraphTask.airrvr_review_retry_count` 计数器；② soft route = `prompt.ts` 中向 `scheduler` 注入 AirRvr 强制路由 system prompt） | P1-26, P1-27 | 3d ✅ |
 
 **验证标准**：所有现有项目（DecodePlayer 系列）的 state.json 在 V2 引擎下不损坏；AirXDB 假阳性率降至 0。
+
+**T-1.26 L1 代码级强制（不可绕过）**：
+
+CLAUDE.md 第 3.1 节"对 LLM 自觉性 0 信任"——因此 T-1.26 的 Python 层 API（`AirRvrDispatcher` / `AbyssalWatchClient` / `SanitizerRunner`）仅作为测试辅助；真正"强制路由"的 L1 代码级强制落在 `packages/opencode/src/tool/coordinator.ts` 与 `packages/opencode/src/session/prompt.ts` 的 TS 二进制内。
+
+已落地的 TS 硬门禁：
+
+| 位置 | 约束 | 失败处理 |
+|---|---|---|
+| `coordinator.ts:validateAirRvrReports` (纯函数) + `validateAirRvrReviewCoverage` (纯函数) | 文本扫描 R-01~R-16 16 项编号，400 字符窗口内寻找判定词 | - |
+| `coordinator.ts` 第 832 行附近 Worker 完成分支 | `task.status` 进入 `pending_review` 之前必须先 `validateAirRvrReports(...)` 通过 | 缺失任一项 → `dispatch_worker` 退回（带 `buildAirRvrWorkerRetryPrompt`）；超 `constraints.retry_budget`（默认 3）→ `blocked` |
+| `coordinator.ts` 第 897 行附近 Reviewer 完成分支 | `task.status` 进入 `completed` 之前必须先 `validateAirRvrReviewCoverage(...)` 通过 | 任一未评估 → `dispatch_reviewer` 重审（带 `buildAirRvrReviewerReReviewPrompt`）；超 `constraints.airrvr_review_retry_budget`（默认 2）→ `blocked` |
+| `prompt.ts` scheduler system prompt | "[AirRvr 强制路由 (T-1.26)]" 段落明确声明两条 L1 Gate + 禁止绕过 + R-07/R-13 必须 architect 参与 | Soft route（与 TS 硬门禁相辅，但不替代） |
+| `TickResult.airrvr_reports?: string[]` | scheduler 可显式声明提交的 R-XX 报告编号（与文本扫描互补；**LLM 不可信，仍以文本扫描为准**） | - |
+| `TaskGraphTask.airrvr_review_retry_count?: number` | 独立于 worker `retry_count` 的 reviewer 重审计数 | - |
+
+**不变量**：
+- **INV-RVR-1**: Worker `status="completed"` 必须包含 R-01~R-16 全部 16 项专项报告；任一缺失 → coordinator_tick 退回重做
+- **INV-RVR-2**: Reviewer 审查结论必须对 R-01~R-16 逐项给出明确判定（PASS/FAIL/通过/未通过/条件式/BLOCK/SKIP）；任一未评估 → coordinator_tick 退回重审
+- **INV-RVR-3**: coordinator_tick 是唯一允许把 `task.status` 设为 `"completed"` 的代码位置，因此是唯一允许放行通过 AirRvr Gate 的位置
 
 ### Phase 2 — 引擎增强
 
@@ -1845,7 +2346,7 @@ air_runtime/
 | T-3.3 | AirSDB 多语言后端 | AirSDB 差距 |
 | T-3.4 | AirXDB kmsgrab + xvfb | AirXDB 差距 |
 | T-3.5 | AirDbg 步骤追踪 + 回滚 | AirDbg 差距 |
-| T-3.6 | AirRvr 需求审查器 | 交付物与需求一致性验证缺失 |
+| T-3.6 | AirRvr 16 项专项子代理派发机制（第三方测试身份、独立上下文派发、Abyssal Watch Engine 集成、ASan/TSan/UBSan/QTEST 强制） | P1-26, P1-27（深化，与 T-1.26 衔接） | 
 | T-3.7 | AirSec 安全扫描 | 制品敏感数据泄露风险 |
 
 ### Phase 4 — 规模化

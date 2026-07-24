@@ -1,0 +1,90 @@
+name: aircoding-build
+
+# AirCoding fork 的 Windows x64 编译 workflow。
+# 与上游 publish.yml 完全隔离（publish.yml 的每个 job 都有
+# 'github.repository == anomalyco/opencode' 守卫，推送到此 fork 不会触发上游 release）。
+#
+# 触发条件：
+#   1. 任何对 opencoderiver 分支的 push（含本文件改动）
+#   2. workflow_dispatch 手动触发，可指定 OPENCODE_VERSION
+#
+# 输出：
+#   - GitHub Actions artifact: aircoding-windows-x64
+#     内含 packages/opencode/dist/opencode-windows-x64/bin/opencode.exe
+#
+# 构建环境：ubuntu-latest（GitHub 免费托管 runner），bun 1.3.x
+#
+# 不在本 workflow 范围：签名、发布到 npm/brew/choco、发布 GitHub release。
+
+on:
+  push:
+    branches:
+      - opencoderiver
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "覆盖 OPENCODE_VERSION（留空则使用 git rev + channel）"
+        required: false
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-windows-x64:
+    # 双重保险：即使未来有人复制此 workflow 到上游 repo，
+    # 也明确只在本 fork 仓库跑
+    if: github.repository == 'AirLongDian/AirCoding'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${VERSION_INPUT:-}" ]]; then
+            VERSION="$VERSION_INPUT"
+          else
+            SHA=$(git rev-parse --short HEAD)
+            VERSION="0.0.1-${SHA}"
+          fi
+          echo "Using OPENCODE_VERSION=$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+
+      - name: Build Windows x64 binary
+        env:
+          OPENCODE_VERSION: ${{ steps.version.outputs.version }}
+          OPENCODE_CHANNEL: opencoderiver
+        run: |
+          # 全量构建所有平台（脚本内部会 bun install --os="*" --cpu="*" 安装跨平台依赖）
+          # 后续仅上传 windows-x64 artifact，其他平台的构建产物丢弃以节省存储
+          ./packages/opencode/script/build.ts --skip-embed-web-ui
+
+      - name: Verify Windows x64 binary exists
+        run: |
+          ls -la packages/opencode/dist/opencode-windows-x64/bin/opencode.exe
+          # Smoke test: 不能真的运行（Linux runner），但可以验证是 PE 文件
+          file packages/opencode/dist/opencode-windows-x64/bin/opencode.exe | grep -i "PE32"
+
+      - name: Upload Windows x64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aircoding-windows-x64
+          path: packages/opencode/dist/opencode-windows-x64
+          retention-days: 14
+          if-no-files-found: error
