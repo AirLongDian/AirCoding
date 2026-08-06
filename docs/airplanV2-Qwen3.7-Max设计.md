@@ -1890,7 +1890,7 @@ class XvfbCapture(CaptureBackend):
 | R-09 | **测试覆盖率与执行**：已有测试是否完善、能否完全覆盖功能与需求，配置到 Catch2 / CTest 后执行 | cpp, cmake | 否 | `catch2 + ctest` | block |
 | R-10 | **有效注释率审计**：有效注释率必须 > 60%（仅计算有效注释） | cpp | 否 | `comment-analyzer` | block |
 | R-11 | **关键流程日志落点审查**：各关键流程与节点是否打印日志，日志输出配置是否正确且符合设计 | cpp, architecture | 否 | 无 | block |
-| R-12 | **Watchdog 心跳初始化审查**：仅 CORE 模块适用 | core-module | 否 | 无 | block |
+| R-12 | **高风险操作异常回退机制审查**：关键高风险操作（文件写入/网络请求/DB 事务/配置变更/状态机转换）是否有异常回退或恢复机制，回退路径是否真实可达 | cpp, architecture | 否 | 无 | block |
 | R-13 | **Debug 断言 + 仿真实环境测试**：Debug 模式增加断言，在目标设备进行全功能仿真实环境测试，确保每一步状态变化符合设计预期 | cpp, core-module | 是（强制） | `target-device-simulator` | block |
 | R-14 | **禁止降级兜底审查**：扫描"先这样实现""先跑通再说""以后再改"等降级痕迹 | all | 否 | `degradation-scan` | block |
 | R-15 | **Abyssal Watch Engine 静态交叉审查**：必须调用深渊观察引擎执行 Infer + Cppcheck + Clang-Tidy + Semgrep 交叉静态审查，无条件可用则降级为手动四工具交叉审查但不允许仅单工具通过 | cpp | 否 | `abyssal-watch` | block |

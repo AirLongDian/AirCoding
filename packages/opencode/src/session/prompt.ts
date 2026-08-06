@@ -1350,7 +1350,7 @@ export const layer = Layer.effect(
                 [
                   "[AirRvr 强制路由 (T-1.26)]",
                   "coordinator_tick 已硬注入 L1 代码级强制：",
-                  "(1) Worker status=\"completed\" 必须包含 R-01~R-15 全部 15 项专项报告 (智能指针 / RAII / 循环依赖 / 异常安全 / 对象生命周期竞态 / 架构引用 / Code-to-Design 逐行对照 / CMakeList / 测试覆盖 / 注释率≥60% / 关键流程日志 / Watchdog 心跳 / Debug 断言 / 禁止降级 / Abyssal Watch 静态交叉)。R-16 ASan/TSan/UBSan 仅 RVR 阶段由三方测试子代理执行。",
+                  "(1) Worker status=\"completed\" 必须包含 R-01~R-15 全部 15 项专项报告 (智能指针 / RAII / 循环依赖 / 异常安全 / 对象生命周期竞态 / 架构引用 / Code-to-Design 逐行对照 / CMakeList / 测试覆盖 / 注释率≥60% / 关键流程日志 / 高风险操作异常回退 / Debug 断言 / 禁止降级 / Abyssal Watch 静态交叉)。R-16 ASan/TSan/UBSan 仅 RVR 阶段由三方测试子代理执行。",
                   "coordinator_tick 缺失任何一项 → 退回 worker 重做；超 budget → blocked。",
                   "(2) Reviewer 完成后 coordinator_tick 强制派发 16 个三方测试子代理 (R-01~R-16)，每个专职执行一项专项审查。RVR worker 结果必须带 rvr_id 字段传回 tick。",
                   "(3) 全部 16 项 RVR 结果到齐后，coordinator_tick 派发 Reviewer 做最终汇总审查。汇总审查报告中每项 R-01~R-16 必须给出明确判定 + 证据引用。",
