@@ -1,0 +1,3 @@
+[submodule "external/abyssEngine"]
+	path = external/abyssEngine
+	url = https://github.com/AirLongDian/abyssEngine.git
