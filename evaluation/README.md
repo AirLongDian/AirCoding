@@ -1,8 +1,10 @@
-测试包下载：同目录 aircoding-analysis-test.zip，下载并解压后执行下面的步骤。
+下载并解压同目录 aircoding-analysis-test.zip 后执行。
 
 # AirCoding 项目理解引擎测试包
 
 不包含 Understand、授权、Joern 安装文件或任何破解程序。C++ 夹具、辅助脚本和云端参考结果均在包内。优先从下面 A 或 B 中选择你要验证的工具，无须安装 VS Code。
+
+新增无人值守评估与部署限制见 [UNATTENDED-EVALUATION.md](UNATTENDED-EVALUATION.md)。Understand 自动验证入口为 run_understand.py，尚待真实安装环境执行。
 
 ## 测什么
 
@@ -48,33 +50,48 @@ python3 run_joern.py --joern-home /path/to/joern-cli --generator "Unix Makefiles
 
 `summary.json` 是结论，`commands.json` 记录命令、退出码和耗时，每阶段有独立日志。单次小样例耗时不能当作大项目性能数据。
 
-## B. Understand 本机正版验证
+## B. Understand 无人值守验证（无需打开 GUI）
 
-只在你已安装、已授权的 Understand 环境运行，无需转交授权。
+前置条件一次性完成：合法安装与激活 Understand，准备对应的 und、upython、CMake、Ninja 和 C++ 编译器。无需配置模型，也不修改管理员 AI 策略。脚本没有在真实 Understand 8.0 环境执行，以下用于确认该安装/授权组合是否能无人值守运行，不能预先称为已验证。
 
-1. 可以直接用 CLion 分别打开 sample 和 sample-explicit。使用 C++20 工具链与 Ninja，将 `CMAKE_EXPORT_COMPILE_COMMANDS` 设为 ON，配置、编译、运行；两个程序均应返回 0。
-2. 或从有可用 C++ 编译器的终端生成：
+启动一次脚本后，将自动完成 API 预检、两套夹具的配置/编译/实际运行、从编译数据库创建 Understand 项目、分析、导出和引用证据检查。每个子进程关闭标准输入，并设置超时；不要求逐步点击确认。
 
-```sh
-cmake -S sample -B build-original -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-cmake --build build-original
-cmake -S sample-explicit -B build-explicit -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-cmake --build build-explicit
+```powershell
+python run_understand.py --und "D:\实际安装目录\und.exe" --upython "D:\实际安装目录\upython.exe"
 ```
 
-3. 按你 Understand 版本支持的方式分别建立两个独立 C++ 分析项目，导入各自编译数据库或等价编译配置，完成分析。不要把两种源码混进同一个项目。
-4. 用 Understand 自带的 upython，或已正确配置官方绑定的 Python，执行以下命令；`.und` 路径替换为实际项目，输出目录必须尚不存在：
+工具已在 PATH 时：
 
 ```sh
-upython export_understand.py /path/original.und --output understand-original
-upython export_understand.py /path/explicit.und --output understand-explicit
+python3 run_understand.py
 ```
 
-Windows 如果 upython 不在 PATH，用其完整路径运行。不要 `pip install understand`：PyPI 上同名包并非这里需要的 SciTools 绑定。
+可用 `--cmake` 指定 CMake 完整路径，`--generator "Unix Makefiles"` 改用 Make，`--timeout 300` 设置每阶段超时。Windows 使用 MSVC 时需由配置好编译器环境的终端/任务执行器启动。
 
-5. 检查两个 summary.json：errors 应为空，cross_layer_reference_evidence 应包含 decoder.cpp 对 allow_frame 的引用。再核对引用的 kind、line、scope，确认不是仅匹配了方法源码字符串。
+自动建库命令形态来自 stinb/understand-jenkins-plugin 的 UndBuilder.java：
 
-输出包括 entities.jsonl、references.jsonl、summary.json。脚本不调用修改 Understand 数据库的 API，也不采集授权值。发生 API 错误时记录为 partial，不冒充成功。此脚本依据公开 API 示例编写，云端没有 Understand，尚未执行该路径；若版本不兼容，请保留错误以便适配。
+```text
+und -db PROJECT.und create -languages all add compile_commands.json analyze
+```
+
+本版本若不接受命令、授权需要交互、Python 绑定不可用或策略阻止执行，将保留失败日志，不跳过检查。脚本不会配置/读取授权值，不使用破解软件，也不会启用被禁用的 AI 功能。
+
+查看 `results/understand-时间戳/summary.json`：
+
+- `reference_check_passed`（返回 0）：自动链路跑通，两种写法都有预期跨层引用；仍需核对分析日志是否存在未解析内容。
+- `semantic_gap_detected`（返回 2）：链路完成，但至少一种写法缺少证据。
+- `execution_failed`（返回 1）：环境、授权、命令、绑定、编译或导出阶段失败；根据对应日志定位，不视为代码审查不通过。
+
+所有输出为新目录。当前脚本只验证自动建库和批量导出，不验证常驻 MCP、并发数据库读取、运行中更新或大型工程性能。常驻服务部署完成后可由任务执行器启动它；如果分析节点在个人电脑上，关机/休眠会中断可用性，脚本无法消除此部署约束。
+
+也可单独用已建好的项目执行原始导出：
+
+```sh
+upython export_understand.py /path/original.und --output result-original
+upython export_understand.py /path/explicit.und --output result-explicit
+```
+
+输出目录须尚不存在。不要 `pip install understand`：PyPI 同名包不是这里需要的 SciTools 绑定。查看两个 summary.json 的 errors 和 cross_layer_reference_evidence。
 
 ## C. 看已有结果与测 token
 
